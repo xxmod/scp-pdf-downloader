@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>{{ book_title }}</title>
+  <style>
+{{ inline_css | safe }}
+
+    /* 额外的打印专属修饰 */
+    @media print {
+      body {
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ==================== 封面页 ==================== -->
+  <div class="cover-page">
+    <div class="cover-header">
+      <img class="cover-logo" src="data:image/png;base64,{{ logo_base64 }}" alt="SCP Foundation Logo">
+      <div class="cover-header-text">
+        <h1 class="cover-main-title">SCP 基金会</h1>
+        <div class="cover-motto">控制，收容，保护</div>
+      </div>
+    </div>
+
+    <hr class="cover-divider">
+
+    <div class="cover-sub-title">内部人员参考手册</div>
+
+    <div class="cover-stamp-container">
+      <div class="cover-stamp">
+        <span>{{ random_stamp_code }}</span>
+      </div>
+    </div>
+
+    <div class="cover-footer">
+      <div>SCP基金会中国分部</div>
+      <div class="cover-version">版本 {{ version }} - {{ date_str }}</div>
+    </div>
+  </div>
+
+  <!-- ==================== 目录页 ==================== -->
+  <div class="toc-page">
+    <h2 class="toc-title">目&nbsp;&nbsp;录</h2>
+    <ul class="toc-list">
+      {% for item in items %}
+      <li class="toc-item">
+        <a class="toc-link" href="#{{ item.slug }}">{{ item.num }}. {{ item.slug|upper }} {{ item.title_cn }}</a>
+      </li>
+      {% endfor %}
+    </ul>
+  </div>
+
+  <!-- ==================== 正文部分 ==================== -->
+  {% set current_part = 0 %}
+  {% for item in items %}
+
+    <!-- 分卷提示页判断 (如 2~100 为第一卷，101~200 为第二卷) -->
+    {% set part_idx = (item.num - 1) // 100 + 1 %}
+    {% if part_idx != current_part %}
+      {% set current_part = part_idx %}
+      <div class="part-page">
+        <div class="part-number">第 {{ current_part }} 卷</div>
+        <div class="part-title">SCP-{{ "%03d"|format((current_part - 1) * 100 + 1 if (current_part - 1) * 100 + 1 > 1 else 2) }} ~ {{ "%03d"|format(current_part * 100) }}</div>
+      </div>
+    {% endif %}
+
+    <!-- 单个 SCP 条目页面 -->
+    <section class="chapter" id="{{ item.slug }}">
+      <div class="chapter-header">
+        <div class="chapter-number-en">{{ item.num }}.&nbsp;&nbsp;{{ item.title_en }}</div>
+        <div class="chapter-title-cn">{{ item.slug|upper }} {{ item.title_cn }}</div>
+      </div>
+
+      <div class="chapter-content">
+        {{ item.html_body | safe }}
+      </div>
+    </section>
+
+  {% endfor %}
+
+</body>
+</html>

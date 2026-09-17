@@ -12,31 +12,14 @@ from bs4 import BeautifulSoup
 
 
 class SCPTexExporter:
-    def __init__(self, master_dir: Optional[str] = None):
+    def __init__(self, tex_dir: Optional[str] = None):
         """
         初始化 LaTeX 导出器。
-        优先寻找用户重新保存的 data/scp-pdf-master，若不存在则回退至当前目录的 scp-pdf-master。
-        :param master_dir: scp-pdf-master 项目根目录（可选）
+        默认将所有 .tex 文件导出到项目根目录的 tex/ 文件夹下。
+        :param tex_dir: 输出目录（可选，默认为 './tex'）
         """
-        if master_dir:
-            self.master_dir = os.path.abspath(master_dir)
-        else:
-            candidates = [
-                os.path.join("data", "scp-pdf-master"),
-                "scp-pdf-master"
-            ]
-            chosen = "scp-pdf-master"
-            for c in candidates:
-                if os.path.exists(c):
-                    chosen = c
-                    break
-            self.master_dir = os.path.abspath(chosen)
-
-        self.part00_dir = os.path.join(self.master_dir, "part00")
-        self.part01_dir = os.path.join(self.master_dir, "part01")
-        self.part02_dir = os.path.join(self.master_dir, "part02")
-        self.images_dir = os.path.join(self.master_dir, "images")
-        os.makedirs(self.images_dir, exist_ok=True)
+        self.tex_dir = os.path.abspath(tex_dir or "tex")
+        os.makedirs(self.tex_dir, exist_ok=True)
 
     def _html_to_latex(self, html_text: str) -> str:
         """
@@ -115,25 +98,30 @@ class SCPTexExporter:
 
         return "\n".join(tex_parts)
 
+    def export_item_to_file(self, item: Dict[str, Any]):
+        """
+        将单篇条目导出为 .tex 文件，保存到 tex/ 目录。
+        """
+        num = item["num"]
+        tex_content = self.export_item(item)
+        filename = f"{num:03d}.tex"
+        filepath = os.path.join(self.tex_dir, filename)
+        with open(filepath, "w", encoding="utf-8") as f:
+            f.write(tex_content)
+        return filepath
+
     def update_part02_index(self, start_num: int = 191, end_num: int = 200):
         """
-        自动检查并向 part02/index.tex 追加新收录的篇目（如 191~200）。
+        在 tex/ 目录中创建 / 更新 index.tex，列出所有已导出的 .tex 文件。
         """
-        index_file = os.path.join(self.part02_dir, "index.tex")
-        if not os.path.exists(index_file):
-            return
+        index_file = os.path.join(self.tex_dir, "index.tex")
 
-        with open(index_file, "r", encoding="utf-8") as f:
-            content = f.read()
+        # 扫描 tex/ 目录中已有的条目
+        existing_files = sorted(
+            f for f in os.listdir(self.tex_dir) if f.endswith(".tex") and f != "index.tex"
+        )
 
-        added = []
-        for n in range(start_num, end_num + 1):
-            line = f"\\input{{part02/{n}}}"
-            if line not in content:
-                content += f"\n{line}"
-                added.append(n)
-
-        if added:
-            with open(index_file, "w", encoding="utf-8") as f:
-                f.write(content.strip() + "\n")
-            print(f"[LaTeX源码] 已向 part02/index.tex 追加篇目: {added}")
+        lines = [f"\\input{{tex/{f[:-4]}}}" for f in existing_files]
+        with open(index_file, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines) + "\n")
+        print(f"[LaTeX源码] 已更新 tex/index.tex，共 {len(lines)} 篇")

@@ -53,13 +53,15 @@ class SCPPdfBuilder:
         if os.path.exists(cached_b64):
             with open(cached_b64, "r", encoding="utf-8") as f:
                 return f.read().strip()
-        for p in [
-            os.path.join(self.work_dir, "data", "scp-pdf-master", "images", "logo.png"),
-            os.path.join(self.work_dir, "scp-pdf-master", "images", "logo.png"),
-        ]:
-            if os.path.exists(p):
-                with open(p, "rb") as f:
-                    return base64.b64encode(f.read()).decode("utf-8")
+        # 直接从项目根目录读取 logo.png
+        logo_path = os.path.join(self.work_dir, "./templates/logo.png")
+        if os.path.exists(logo_path):
+            with open(logo_path, "rb") as f:
+                b64 = base64.b64encode(f.read()).decode("utf-8")
+            # 写入缓存
+            with open(cached_b64, "w", encoding="utf-8") as f:
+                f.write(b64)
+            return b64
         return ""
 
     def render_html(self, items: List[Dict[str, Any]], version: str = "1.20") -> str:
@@ -87,6 +89,32 @@ class SCPPdfBuilder:
             items=items,
             inline_css=inline_css
         )
+
+        # 兜底防御：若存在 colmod-block 列表型折叠嵌套，展平其嵌套以杜绝任何 Chromium 栈溢出崩溃
+        if "colmod-block" in html_content:
+            from bs4 import BeautifulSoup
+            clean_soup = BeautifulSoup(html_content, "html.parser")
+            for colmod in list(clean_soup.find_all("div", class_="colmod-block")):
+                for dummy in list(colmod.find_all("li", style=lambda s: s and "none" in s)):
+                    dummy.decompose()
+                link = colmod.find(class_="colmod-link-top")
+                if link:
+                    txt = link.get_text().strip()
+                    half = len(txt) // 2
+                    if half > 0 and txt[:half] == txt[half:]:
+                        txt = txt[:half]
+                    ptag = clean_soup.new_tag("p")
+                    btag = clean_soup.new_tag("strong")
+                    btag.string = f"[{txt}]"
+                    ptag.append(btag)
+                    link.replace_with(ptag)
+                colmod.unwrap()
+            for c in list(clean_soup.find_all("div", class_="colmod-content")):
+                c.unwrap()
+            for li in list(clean_soup.find_all("li", class_="folded")):
+                li.unwrap()
+            html_content = str(clean_soup)
+
         return html_content
 
     def _post_process_pdf(self, raw_pdf_path: str, final_pdf_path: str, items: List[Dict[str, Any]]):
@@ -324,7 +352,7 @@ class SCPPdfBuilder:
             
             file_url = f"file:///{temp_html_path.replace(os.sep, '/')}"
             print(f"  - 正在加载本地文档 DOM 与全部图像资源: {file_url[:50]}...", flush=True)
-            page.goto(file_url, wait_until="load")
+            page.goto(file_url, wait_until="load", timeout=120000)
             print(f"  - 页面 DOM 与样式加载完成，开始执行全书分页排版（共收录 {len(items)} 篇文档，排版耗时与文档篇幅相关，请稍候）...", flush=True)
 
             # 导出纯净版心的 PDF (关闭浏览器自带的 header/footer，边距严格匹配原版 0.5cm)

@@ -2,8 +2,7 @@
 """
 SCP 档案下载与高保真 PDF 整合工具主程序
 默认目标: 下载并整合 SCP-001（含枢纽页与全部多提案）及 SCP-002 至 SCP-200（可扩展至 SCP-9999）
-输出形似 scp.op3.notofira.v1.19.pdf 的移动版高保真 PDF 电子书，
-并兼容补齐 data/scp-pdf-master 的 LaTeX 源码。
+输出形似 scp.op3.notofira.v1.19.pdf 的移动版高保真 PDF 电子书。
 """
 
 import os
@@ -75,8 +74,8 @@ def parse_args():
     parser.add_argument(
         "--export-tex",
         action="store_true",
-        default=True,
-        help="同步补齐 data/scp-pdf-master 中的 LaTeX 源码 (默认开启)"
+        default=False,
+        help="将所有条目导出为 .tex 文件到项目根目录的 tex/ 文件夹 (默认关闭)"
     )
     return parser.parse_args()
 
@@ -117,7 +116,7 @@ def main():
             try:
                 hub_item = parser.parse_scp001_hub(hub_html)
                 parsed_items.append(hub_item)
-                print("  - 已成功解析并结构化 SCP-001 枢纽页 (含最高机密告示与模因抹杀触媒大图)", flush=True)
+                print("  - 已成功解析并结构化 SCP-001 枢纽页", flush=True)
             except Exception as e:
                 print(f"  [警告] 解析 SCP-001 枢纽页异常: {e}", flush=True)
 
@@ -180,32 +179,18 @@ def main():
 
     print(f"[内容解析完成] 全书共计就绪 {len(parsed_items)} 篇结构化文档\n", flush=True)
 
-    # 5. 可选: 导出 LaTeX 源码并补齐 data/scp-pdf-master (重点补充 191~200 等缺失篇目)
     if args.export_tex:
-        exporter = SCPTexExporter()
-        if os.path.exists(exporter.master_dir):
-            print(f"\n[LaTeX导出] 检查并补全 {exporter.master_dir} 源码...")
-            for item in parsed_items:
-                num = item.get("num", 0)
-                # 如果是 101~200 区间且非 001 提案，输出到 part02
-                if 101 <= num <= 200 and not item.get("is_proposal") and not item.get("is_hub"):
-                    tex_file = os.path.join(exporter.part02_dir, f"{num}.tex")
-                    if not os.path.exists(tex_file):
-                        tex_code = exporter.export_item(item)
-                        with open(tex_file, "w", encoding="utf-8") as f:
-                            f.write(tex_code)
-                        print(f"  - 已补全 LaTeX 篇目: part02/{num}.tex")
-                    # 同步图片到 master/images
-                    for img_info in item.get("images", []):
-                        src_img = img_info["path"]
-                        dst_img = os.path.join(exporter.images_dir, os.path.basename(src_img))
-                        if os.path.exists(src_img) and not os.path.exists(dst_img):
-                            shutil.copy2(src_img, dst_img)
-
-            # 更新 part02 索引
-            exporter.update_part02_index(start_num=191, end_num=200)
-        else:
-            print(f"\n[LaTeX导出] 未检测到 {exporter.master_dir} 源码目录，跳过 LaTeX 补全。")
+        exporter = SCPTexExporter()  # 默认导出到 ./tex/
+        print(f"\n[LaTeX导出] 正在将条目导出到 {exporter.tex_dir} ...")
+        exported_count = 0
+        for item in parsed_items:
+            try:
+                filepath = exporter.export_item_to_file(item)
+                exported_count += 1
+            except Exception as e:
+                print(f"  [警告] 导出 {item.get('slug', '?')} 失败: {e}")
+        exporter.update_part02_index()
+        print(f"[LaTeX导出完成] 已导出 {exported_count} 篇至 {exporter.tex_dir}")
 
     # 6. 高保真 PDF 构建
     print("\n[PDF生成] 启动 Playwright 引擎渲染并合成 PDF...")

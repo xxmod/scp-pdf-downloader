@@ -156,7 +156,6 @@ class SCPParser:
             if "文件名：" in bq_text and "图像作者" in bq_text:
                 bq.decompose()
 
-        # 4. 处理折叠块 (collapsible-block)：在打印版中直接展开其内容
         for fold in content_div.find_all("div", class_="collapsible-block"):
             unfolded = fold.find("div", class_="collapsible-block-content")
             if unfolded:
@@ -173,6 +172,36 @@ class SCPParser:
                 fold.replace_with(box_div)
             else:
                 fold.decompose()
+
+        # 4.1 处理多层列表型折叠模块 (colmod-block / foldable-list)
+        # 针对如 SCP-5764 等长达上百层的递归折叠列表，展平其嵌套深度，杜绝 Chromium 渲染引擎发生 C++ 栈溢出崩溃
+        for colmod in list(content_div.find_all("div", class_="colmod-block")):
+            for dummy_li in list(colmod.find_all("li", style=lambda s: s and "none" in s)):
+                dummy_li.decompose()
+            link_top = colmod.find(class_="colmod-link-top")
+            if link_top:
+                t_text = link_top.get_text().strip()
+                if t_text:
+                    half = len(t_text) // 2
+                    if half > 0 and t_text[:half] == t_text[half:]:
+                        t_text = t_text[:half]
+                    title_tag = soup.new_tag("p")
+                    title_b = soup.new_tag("strong")
+                    title_b.string = f"[{t_text}]"
+                    title_tag.append(title_b)
+                    link_top.replace_with(title_tag)
+                else:
+                    link_top.decompose()
+            colmod.unwrap()
+
+        for c in list(content_div.find_all("div", class_="colmod-content")):
+            c.unwrap()
+        for li in list(content_div.find_all("li", class_="folded")):
+            li.unwrap()
+
+        # 4.2 清理 iframe 与 script 标签（如 interwiki 侧栏 theme 样式帧及前端脚本，打印版无意义且可能导致崩溃或卡顿）
+        for el in list(content_div.find_all(["iframe", "script"])):
+            el.decompose()
 
         # 5. 标准化 blockquote 为 scpbox
         for bq in content_div.find_all("blockquote"):

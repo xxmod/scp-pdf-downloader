@@ -1,18 +1,18 @@
 # SCP 档案下载与高保真 PDF 整合工具
 
-用于从本地 Kiwix 或在线镜像站点抓取 SCP 基金会档案，并构建高保真移动端 PDF 电子书的自动化工具。支持 SCP-001 全量多提案及 SCP-002 至 SCP-9999 的批量抓取、结构化清洗、版心排版、原生多级大纲注入与 LaTeX 源码同步补全。
+用于从本地 Kiwix 或在线镜像站点抓取 SCP 基金会档案，并构建高保真移动端 PDF 电子书的自动化工具。支持 SCP-001 全量多提案及 SCP-002 至 SCP-9999 的批量抓取、结构化清洗、版心排版、原生多级大纲注入与 LaTeX 源码导出。
 
 ---
 
 ## 核心特性
 
-- **完整支持 SCP-001 多提案**：自动解析 001 枢纽页（含模因抹杀触媒警告及高清分形图），全量收录本地镜像中的全部 001 提案。
+- **完整支持 SCP-001 多提案**：自动解析 001 枢纽页，全量收录本地镜像中的全部 001 提案。
 - **高保真移动端排版**：严格匹配 OnePlus 3 版心规格与 9.96pt 正文字号，每行稳定容纳 25~26 个汉字。
 - **动态页眉与页脚**：正文页安全区自动绘制 0.4pt 页眉横线，奇数页居右、偶数页居左严密贴边；底部中央独立连续计算正文页码；封面与目录绝对无页码。
 - **原生多级书签树**：自动生成 PDF 目录大纲（TOC Bookmarks），SCP-001 提案以二级折叠树形式呈现，点击可精确跳转到对应页面。
 - **断点缓存与容错**：页面与图片自动缓存至本地；遇到 404 或无离线副本的外链自动平滑跳过；自动清理失效或损坏的图片标签，杜绝 PDF 中出现破损图标。
 - **图像自动压缩**：下载配图自动通过 Pillow 转换为 JPEG 并以 60% 质量压缩，大幅减少最终 PDF 体积。
-- **LaTeX 源码同步**：支持对接 `data/scp-pdf-master`，自动补全生成新增篇目的 `.tex` 源码并更新索引。
+- **LaTeX 源码导出**：使用 `--export-tex` 可将全部条目导出为 `.tex` 文件到根目录下的 `tex/` 文件夹，并自动生成 `tex/index.tex` 索引。
 
 ---
 
@@ -24,8 +24,6 @@
   pip install playwright pymupdf beautifulsoup4 pillow jinja2
   playwright install chromium
   ```
-
----
 
 ## 快速使用
 
@@ -58,6 +56,12 @@ python main.py --start 1 --end 300 --split
 ```
 上述命令将自动生成 `scp_001-200.pdf` 与 `scp_201-300.pdf` 两个独立文件。
 
+### 6. 导出 LaTeX 源码 (--export-tex)
+将全部解析好的条目导出为 `.tex` 文件到根目录 `tex/` 文件夹，并生成 `tex/index.tex` 索引：
+```bash
+python main.py --export-tex
+```
+
 ---
 
 ## 命令行参数说明
@@ -72,7 +76,7 @@ python main.py --start 1 --end 300 --split
 | `--output`, `-o` | 输出 PDF 文件名或绝对路径（`--split` 开启时无效） | `scp.op3.v1.20_scp001-200.pdf` |
 | `--split` | 启用分段模式（每隔 200 个条目生成独立 PDF，命名为 `scp_xxx-xxx.pdf`） | 关闭 |
 | `--skip-download` | 跳过网络抓取，直接使用本地缓存 | 关闭 |
-| `--export-tex` | 同步补全 data/scp-pdf-master 中的 LaTeX 源码 | 开启 |
+| `--export-tex` | 将全部条目导出为 `.tex` 文件到 `tex/` 目录 | 关闭 |
 
 ---
 
@@ -83,18 +87,23 @@ scp-downloader/
 ├── crawler.py           # 网络下载与断点缓存模块
 ├── parser.py            # HTML 清洗与结构化解析模块
 ├── pdf_builder.py       # Playwright 版心排版与 PyMuPDF 后处理
-├── tex_exporter.py      # LaTeX 源码导出与补全模块
+├── tex_exporter.py      # LaTeX 源码导出模块
 ├── main.py              # 主程序入口
+├── logo.png             # SCP Logo（可选，封面使用）
 ├── templates/
 │   ├── op3_book.html    # Jinja2 电子书排版模板
 │   └── op3_style.css    # 版心排版与正文字体 CSS 样式表
 ├── data/
 │   ├── html/            # 本地 HTML 缓存（含 proposals 子目录）
 │   ├── images/          # 本地已压缩图片缓存
-│   └── scp-pdf-master/  # 原项目 LaTeX 源码目录
-└── README.md
+│   └── logo_b64.txt     # logo base64 缓存（自动生成）
+└── tex/                 # LaTeX 导出目录（--export-tex 时自动生成）
+    ├── 001.tex
+    ├── 002.tex
+    └── index.tex
 ```
 
 ## 致谢
 
-[7sDream/scp-pdf](https://github.com/7sDream/scp-pdf) 提供的PDF样式
+[7sDream/scp-pdf](https://github.com/7sDream/scp-pdf) 参照其项目的PDF样式
+

@@ -35,18 +35,6 @@ def parse_args():
         help="结束常规 SCP 编号 (默认: 200)"
     )
     parser.add_argument(
-        "--include-001",
-        action="store_true",
-        default=True,
-        help="收录 SCP-001 枢纽页及全部多提案 (默认开启)"
-    )
-    parser.add_argument(
-        "--no-001",
-        dest="include_001",
-        action="store_false",
-        help="禁用 SCP-001 提案收录"
-    )
-    parser.add_argument(
         "--host",
         "--base-url",
         dest="base_url",
@@ -63,8 +51,12 @@ def parse_args():
     )
     parser.add_argument(
         "--split",
-        action="store_true",
-        help="启用分段模式：每隔 200 个 SCP 分段生成独立的 PDF 文件 (此时 --output 参数无效，文件命名为 scp_xxx-xxx.pdf)"
+        nargs="?",
+        const=200,
+        default=None,
+        type=int,
+        metavar="N",
+        help="启用分段模式：每隔 N 个 SCP 分段生成独立的 PDF 文件 (不传 N 时默认 200，\n此时 --output 参数无效，文件命名为 scp_xxx-xxx.pdf)"
     )
     parser.add_argument(
         "--skip-download",
@@ -88,14 +80,17 @@ def main():
     args = parse_args()
     start_time = time.time()
 
+    # SCP-001 枢纽页与提案仅在 --start 为 1 时处理
+    include_001 = (args.start == 1)
+
     print("=" * 60)
     print("      SCP 基金会档案下载与整合 PDF 构建系统")
-    if args.split:
-        print("  分段模式 (--split): 开启 (每 200 篇一个独立 PDF，忽略 --output)")
-    print(f"  收录 001 提案: {'是' if args.include_001 else '否'}")
+    if args.split is not None:
+        print(f"  分段模式 (--split): 开启 (每 {args.split} 篇一个独立 PDF，忽略 --output)")
+    print(f"  收录 001 提案: {'是' if include_001 else '否'}")
     print(f"  常规条目范围: SCP-{args.start:03d} ~ SCP-{args.end:03d}")
     print(f"  镜像地址: {args.base_url}")
-    if not args.split:
+    if args.split is None:
         print(f"  输出文件: {args.output}")
     print("=" * 60)
 
@@ -106,8 +101,8 @@ def main():
     parsed_items: List[Dict[str, Any]] = []
     parser = SCPParser(crawler)
 
-    # 2. 处理 SCP-001 枢纽页与全部提案
-    if args.include_001:
+    # 2. 处理 SCP-001 枢纽页与全部提案（仅 --start 1 时）
+    if include_001:
         print("\n[SCP-001模块] 正在获取并解析 SCP-001 枢纽页与全部提案...", flush=True)
         hub_html, prop_htmls = crawler.download_scp001_hub_and_proposals(force=False if args.skip_download else False)
         
@@ -137,7 +132,7 @@ def main():
 
     # 3. 抓取与读取常规条目 HTML (SCP-002 ~ SCP-200)
     # 常规条目起始编号：若包含 001 模块，则常规条目从 2 开始，避免生成与“等待解密[已锁]”重复的“首中之重”
-    regular_start = max(args.start, 2) if args.include_001 else args.start
+    regular_start = max(args.start, 2) if include_001 else args.start
     html_items = []
     if not args.skip_download:
         html_items = crawler.download_range(start_id=regular_start, end_id=args.end)
@@ -196,16 +191,17 @@ def main():
     print("\n[PDF生成] 启动 Playwright 引擎渲染并合成 PDF...")
     builder = SCPPdfBuilder()
 
-    if args.split:
-        # 分段模式：每隔 200 个 SCP 分段
+    if args.split is not None:
+        chunk_size = args.split
+        # 分段模式：每隔 chunk_size 个 SCP 分段
         chunks = []
         curr = args.start
         while curr <= args.end:
-            chunk_end = min(curr + 200 - 1, args.end)
+            chunk_end = min(curr + chunk_size - 1, args.end)
             chunks.append((curr, chunk_end))
             curr = chunk_end + 1
 
-        print(f"\n[分段模式] 启用 --split 参数，每隔 200 篇生成独立 PDF (--output 参数已自动忽略):")
+        print(f"\n[分段模式] 启用 --split {chunk_size} 参数，每 {chunk_size} 篇生成独立 PDF (--output 参数已自动忽略):")
         for idx, (cs, ce) in enumerate(chunks, start=1):
             c_out = f"scp_{cs:03d}-{ce:03d}.pdf"
             print(f"  - 分段 {idx}/{len(chunks)}: SCP-{cs:03d} ~ SCP-{ce:03d} -> {c_out}")
@@ -218,7 +214,7 @@ def main():
 
             chunk_items = []
             # 若该分段覆盖 1 且包含 001 模块，放入 001 枢纽页与全部提案
-            if cs <= 1 <= ce and args.include_001:
+            if cs <= 1 <= ce and include_001:
                 for it in parsed_items:
                     if it.get("is_hub") or it.get("is_proposal"):
                         chunk_items.append(it)

@@ -234,6 +234,9 @@ class SCPCrawler:
         skip_count = 0
 
         for idx, scp_num in enumerate(range(start_id, end_id + 1), start=1):
+            if scp_num == 1:
+                # SCP-001 归入 001 提案集模块（等待解密[已锁]），跳过常规条目抓取，杜绝生成内容重复的“首中之重”
+                continue
             slug = self.get_slug(scp_num)
             title = self.titles_dict.get(scp_num, "")
             title_display = f" - {title}" if title else ""

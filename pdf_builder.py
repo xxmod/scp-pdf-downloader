@@ -283,16 +283,17 @@ class SCPPdfBuilder:
         abs_output_path = os.path.abspath(output_pdf_path)
         os.makedirs(os.path.dirname(abs_output_path), exist_ok=True)
 
+        base_stem = os.path.splitext(os.path.basename(output_pdf_path))[0]
+        temp_html_path = os.path.join(self.work_dir, "data", f"{base_stem}_temp.html")
+        raw_pdf_path = os.path.join(self.work_dir, "data", f"raw_{base_stem}.pdf")
+
         print(f"\n[阶段 1/4] 正在根据 Jinja2 模板渲染包含 {len(items)} 个条目的完整书籍 HTML...", flush=True)
         rendered_html = self.render_html(items, version=version)
 
-        temp_html_path = os.path.join(self.work_dir, "data", "book_render_temp.html")
         with open(temp_html_path, "w", encoding="utf-8") as f:
             f.write(rendered_html)
         html_mb = os.path.getsize(temp_html_path) / (1024 * 1024)
         print(f"  - HTML 渲染写入完成: {temp_html_path} ({html_mb:.2f} MB)", flush=True)
-
-        raw_pdf_path = os.path.join(self.work_dir, "data", "raw_rendered.pdf")
 
         print("\n[阶段 2/4] 启动 Playwright Chromium 无头浏览器进行核心版心排版...", flush=True)
         with sync_playwright() as p:

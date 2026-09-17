@@ -26,8 +26,8 @@ def parse_args():
     parser.add_argument(
         "--start",
         type=int,
-        default=2,
-        help="起始常规 SCP 编号 (默认: 2)"
+        default=1,
+        help="起始 SCP 编号 (默认: 1)"
     )
     parser.add_argument(
         "--end",
@@ -60,7 +60,12 @@ def parse_args():
         "-o",
         type=str,
         default="scp.op3.v1.20_scp001-200.pdf",
-        help="输出 PDF 文件名或路径 (默认: scp.op3.v1.20_scp001-200.pdf)"
+        help="输出 PDF 文件名或路径 (默认: scp.op3.v1.20_scp001-200.pdf，若指定 --split 则本参数无效)"
+    )
+    parser.add_argument(
+        "--split",
+        action="store_true",
+        help="启用分段模式：每隔 200 个 SCP 分段生成独立的 PDF 文件 (此时 --output 参数无效，文件命名为 scp_xxx-xxx.pdf)"
     )
     parser.add_argument(
         "--skip-download",
@@ -86,10 +91,13 @@ def main():
 
     print("=" * 60)
     print("      SCP 基金会档案下载与整合 PDF 构建系统")
+    if args.split:
+        print("  分段模式 (--split): 开启 (每 200 篇一个独立 PDF，忽略 --output)")
     print(f"  收录 001 提案: {'是' if args.include_001 else '否'}")
     print(f"  常规条目范围: SCP-{args.start:03d} ~ SCP-{args.end:03d}")
     print(f"  镜像地址: {args.base_url}")
-    print(f"  输出文件: {args.output}")
+    if not args.split:
+        print(f"  输出文件: {args.output}")
     print("=" * 60)
 
     # 1. 初始化爬虫并建立官方标题索引
@@ -129,12 +137,14 @@ def main():
         print(f"[SCP-001模块完成] 成功收录 {len(parsed_items)} 篇 001 相关文档\n", flush=True)
 
     # 3. 抓取与读取常规条目 HTML (SCP-002 ~ SCP-200)
+    # 常规条目起始编号：若包含 001 模块，则常规条目从 2 开始，避免生成与“等待解密[已锁]”重复的“首中之重”
+    regular_start = max(args.start, 2) if args.include_001 else args.start
     html_items = []
     if not args.skip_download:
-        html_items = crawler.download_range(start_id=args.start, end_id=args.end)
+        html_items = crawler.download_range(start_id=regular_start, end_id=args.end)
     else:
         print("[常规条目] 已启用 --skip-download，正在从本地磁盘缓存读取常规条目 HTML...", flush=True)
-        for scp_num in range(args.start, args.end + 1):
+        for scp_num in range(regular_start, args.end + 1):
             slug = crawler.get_slug(scp_num)
             html_file = os.path.join(crawler.html_dir, f"{slug}.html")
             if os.path.exists(html_file):
@@ -147,7 +157,11 @@ def main():
     total_regs = len(html_items)
     print(f"\n[内容解析] 正在解析清洗 {total_regs} 篇常规 SCP 档案内容...", flush=True)
     for idx, (scp_num, html_text) in enumerate(html_items, start=1):
+        if scp_num == 1:
+            continue
         title_cn = titles_dict.get(scp_num, "")
+        if title_cn == "首中之重":
+            continue
         try:
             item_data = parser.parse(scp_num, html_text, custom_title=title_cn)
             parsed_items.append(item_data)
@@ -156,6 +170,13 @@ def main():
                 print(f"    * [常规条目解析] 进度: {idx}/{total_regs} ({pct:.1f}%) | 当前: SCP-{scp_num:03d} {title_cn}", flush=True)
         except Exception as e:
             print(f"  [警告] 解析 SCP-{scp_num:03d} 发生异常: {e}，跳过此篇", flush=True)
+
+    # 彻底过滤掉任何非枢纽页/非提案的常规 SCP-001 或标题为“首中之重”的重复条目
+    parsed_items = [
+        it for it in parsed_items
+        if not (it.get("num") == 1 and not it.get("is_hub") and not it.get("is_proposal"))
+        and it.get("title_cn") != "首中之重"
+    ]
 
     print(f"[内容解析完成] 全书共计就绪 {len(parsed_items)} 篇结构化文档\n", flush=True)
 
@@ -189,22 +210,81 @@ def main():
     # 6. 高保真 PDF 构建
     print("\n[PDF生成] 启动 Playwright 引擎渲染并合成 PDF...")
     builder = SCPPdfBuilder()
-    output_pdf = builder.build_pdf(
-        items=parsed_items,
-        output_pdf_path=args.output,
-        version="1.20"
-    )
 
-    elapsed = time.time() - start_time
-    file_size_mb = os.path.getsize(output_pdf) / (1024 * 1024)
+    if args.split:
+        # 分段模式：每隔 200 个 SCP 分段
+        chunks = []
+        curr = args.start
+        while curr <= args.end:
+            chunk_end = min(curr + 200 - 1, args.end)
+            chunks.append((curr, chunk_end))
+            curr = chunk_end + 1
 
-    print("\n" + "=" * 60)
-    print("               任务全部完成！")
-    print(f"  已整合篇目: {len(parsed_items)} 篇 (含 001 枢纽及提案 + SCP-{args.start:03d} ~ SCP-{args.end:03d})")
-    print(f"  最终 PDF 路径: {output_pdf}")
-    print(f"  文件大小: {file_size_mb:.2f} MB")
-    print(f"  总耗时: {elapsed:.1f} 秒")
-    print("=" * 60)
+        print(f"\n[分段模式] 启用 --split 参数，每隔 200 篇生成独立 PDF (--output 参数已自动忽略):")
+        for idx, (cs, ce) in enumerate(chunks, start=1):
+            c_out = f"scp_{cs:03d}-{ce:03d}.pdf"
+            print(f"  - 分段 {idx}/{len(chunks)}: SCP-{cs:03d} ~ SCP-{ce:03d} -> {c_out}")
+
+        generated_files = []
+
+        for idx, (cs, ce) in enumerate(chunks, start=1):
+            c_out = f"scp_{cs:03d}-{ce:03d}.pdf"
+            print(f"\n{'=' * 25} 正在构建分段 {idx}/{len(chunks)}: {c_out} {'=' * 25}", flush=True)
+
+            chunk_items = []
+            # 若该分段覆盖 1 且包含 001 模块，放入 001 枢纽页与全部提案
+            if cs <= 1 <= ce and args.include_001:
+                for it in parsed_items:
+                    if it.get("is_hub") or it.get("is_proposal"):
+                        chunk_items.append(it)
+
+            # 放入当前分段范围内的常规条目
+            for it in parsed_items:
+                if not it.get("is_hub") and not it.get("is_proposal"):
+                    num = it.get("num", 0)
+                    if cs <= num <= ce:
+                        chunk_items.append(it)
+
+            if not chunk_items:
+                print(f"  [提示] 分段 {c_out} 内无有效条目，跳过生成", flush=True)
+                continue
+
+            print(f"  - 本分段共收录 {len(chunk_items)} 篇文档，包含专属封面与目录，开始渲染排版...", flush=True)
+            chunk_pdf = builder.build_pdf(
+                items=chunk_items,
+                output_pdf_path=c_out,
+                version="1.20"
+            )
+            chunk_mb = os.path.getsize(chunk_pdf) / (1024 * 1024)
+            generated_files.append((c_out, chunk_pdf, len(chunk_items), chunk_mb))
+            print(f">>> 分段 {idx}/{len(chunks)}: {c_out} 构建成功！(共 {len(chunk_items)} 篇文档, {chunk_mb:.2f} MB)\n", flush=True)
+
+        elapsed = time.time() - start_time
+        print("\n" + "=" * 60)
+        print("               任务全部完成！(--split 分段模式)")
+        print(f"  共生成 {len(generated_files)} 个独立 PDF 分卷 (均包含专属封面与目录):")
+        for c_name, full_path, c_count, c_mb in generated_files:
+            print(f"    * {c_name} (收录 {c_count} 篇, 大小 {c_mb:.2f} MB) -> {full_path}")
+        print(f"  总耗时: {elapsed:.1f} 秒")
+        print("=" * 60)
+
+    else:
+        output_pdf = builder.build_pdf(
+            items=parsed_items,
+            output_pdf_path=args.output,
+            version="1.20"
+        )
+
+        elapsed = time.time() - start_time
+        file_size_mb = os.path.getsize(output_pdf) / (1024 * 1024)
+
+        print("\n" + "=" * 60)
+        print("               任务全部完成！")
+        print(f"  已整合篇目: {len(parsed_items)} 篇 (含 001 枢纽及提案 + SCP-{args.start:03d} ~ SCP-{args.end:03d})")
+        print(f"  最终 PDF 路径: {output_pdf}")
+        print(f"  文件大小: {file_size_mb:.2f} MB")
+        print(f"  总耗时: {elapsed:.1f} 秒")
+        print("=" * 60)
 
 
 if __name__ == "__main__":

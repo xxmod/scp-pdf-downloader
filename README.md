@@ -51,18 +51,26 @@ python main.py --start 2 --end 100 -o scp_002_100.pdf
 python main.py --no-001 --start 2 --end 200
 ```
 
+### 5. 分段生成独立分卷 (--split)
+每隔 200 个 SCP 条目自动切分为一个独立的 PDF 分卷文件（各分卷均包含独立的专属封面与目录），文件自动命名为 `scp_xxx-xxx.pdf`（此时 `--output` 参数自动失效）：
+```bash
+python main.py --start 1 --end 300 --split
+```
+上述命令将自动生成 `scp_001-200.pdf` 与 `scp_201-300.pdf` 两个独立文件。
+
 ---
 
 ## 命令行参数说明
 
 | 参数 | 说明 | 默认值 |
 | :--- | :--- | :--- |
-| `--start` | 常规条目起始编号 | `2` |
+| `--start` | 常规条目起始编号 | `1` |
 | `--end` | 常规条目结束编号 | `200` |
 | `--include-001` | 收录 SCP-001 枢纽页与全部多提案 | 开启 |
 | `--no-001` | 禁用 SCP-001 收录 | - |
 | `--host`, `--base-url` | SCP 镜像站点基地址（需以 `scp-` 结尾） | `http://192.168.6.138:8080/viewer#...` |
-| `--output`, `-o` | 输出 PDF 文件名或绝对路径 | `scp.op3.v1.20_scp001-200.pdf` |
+| `--output`, `-o` | 输出 PDF 文件名或绝对路径（`--split` 开启时无效） | `scp.op3.v1.20_scp001-200.pdf` |
+| `--split` | 启用分段模式（每隔 200 个条目生成独立 PDF，命名为 `scp_xxx-xxx.pdf`） | 关闭 |
 | `--skip-download` | 跳过网络抓取，直接使用本地缓存 | 关闭 |
 | `--export-tex` | 同步补全 data/scp-pdf-master 中的 LaTeX 源码 | 开启 |
 

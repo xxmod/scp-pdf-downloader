@@ -52,6 +52,8 @@
           <li class="toc-item toc-item-sub">
             <a class="toc-link" href="#{{ item.slug }}">&nbsp;&nbsp;&nbsp;&nbsp;{{ item.code_name }}{% if item.title_cn and item.title_cn != item.code_name %} - {{ item.title_cn }}{% endif %}</a>
           </li>
+        {% elif item.title_cn == '首中之重' or (item.num == 1 and not item.is_hub) %}
+          {# 彻底过滤掉与等待解密[已锁]重复的“首中之重”条目 #}
         {% else %}
           <li class="toc-item">
             <a class="toc-link" href="#{{ item.slug }}">{{ item.num }}. {{ item.slug|upper }} {{ item.title_cn }}</a>
@@ -85,6 +87,8 @@
           {{ item.html_body | safe }}
         </div>
       </section>
+    {% elif item.title_cn == '首中之重' or (item.num == 1 and not item.is_hub and not item.is_proposal) %}
+      {# 彻底过滤掉与等待解密[已锁]重复的“首中之重”章节 #}
     {% else %}
       <section class="chapter" id="{{ item.slug }}" data-scp-num="{{ item.num }}">
         <div style="font-size:1pt; line-height:1pt; height:1px; color:#ffffff; overflow:hidden;">{{ item.marker }}</div>

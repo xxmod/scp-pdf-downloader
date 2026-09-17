@@ -175,12 +175,13 @@ class SCPCrawler:
             print(f"[{slug}] 请求异常 ({e})，自动跳过")
             return None
 
-    def download_image(self, img_url: str, save_name: str, context: str = "") -> Optional[str]:
+    def download_image(self, img_url: str, save_name: str, context: str = "", page_url: Optional[str] = None) -> Optional[str]:
         """
         下载并保存图片到本地 images 缓存目录。
         :param img_url: 页面中的图片相对或绝对路径
         :param save_name: 保存的文件名
         :param context: 调用上下文描述（如文章或提案标题），用于定位日志
+        :param page_url: 当前网页的绝对 URL，用于精准计算多级相对路径
         :return: 本地文件的相对或绝对路径，下载失败返回 None
         """
         save_path = os.path.join(self.image_dir, save_name)
@@ -198,15 +199,12 @@ class SCPCrawler:
         # 拼接绝对请求 URL
         if img_url.startswith("http://") or img_url.startswith("https://"):
             full_url = img_url
-        elif img_url.startswith("../"):
-            # 相对路径，如 ../scp-wiki.wdfiles.com/...
-            parent_dir = self.content_base_url.rsplit("/", 2)[0]
-            rel_path = img_url[3:] # 去除 ../
-            full_url = f"{parent_dir}/{rel_path}"
+        elif page_url:
+            full_url = urllib.parse.urljoin(page_url, img_url)
         elif img_url.startswith("/"):
             full_url = f"{self.server_root}{img_url}"
         else:
-            full_url = f"{self.content_base_url.rsplit('/', 1)[0]}/{img_url}"
+            full_url = urllib.parse.urljoin(self.content_base_url, img_url)
 
         try:
             req = urllib.request.Request(full_url, headers={"User-Agent": "SCPPdfBuilder/1.0"})
@@ -281,15 +279,34 @@ class SCPCrawler:
         print(f"\n[抓取完成] 成功下载/已缓存: {success_count} 篇，跳过/不存在: {skip_count} 篇")
         return results
 
+    EXCLUDED_PROPOSALS = {
+        "ouroboros",                   # 衔尾蛇
+        "old-kalinins-proposal",       # 过去与未来
+        "not-a-seagull-proposal",      # 港口上的天空
+        "001-blank-i",                 # 黑暗再临
+        "rounderhouse-bone-proposal",  # 黑色内殿
+        "plague-s-proposal",           # 脱逃者
+    }
+    EXCLUDED_TITLES = {"衔尾蛇", "过去与未来", "港口上的天空", "黑暗再临", "黑色内殿", "脱逃者"}
+
     def fetch_scp001_proposals_meta(self, force: bool = False) -> List[Dict[str, str]]:
         """
         从本地镜像的 scp-001 枢纽页面解析所有提案的元数据列表。
+        自动过滤用户指定的排除提案，并对交互式提案进行特殊定向。
         """
         cache_file = os.path.join(self.cache_dir, "proposals_cache.json")
         if not force and os.path.exists(cache_file):
             try:
                 with open(cache_file, "r", encoding="utf-8") as f:
-                    return json.load(f)
+                    cached = json.load(f)
+                    # 二次过滤，确保缓存中若残留排除提案也能被剔除
+                    filtered_cached = [
+                        p for p in cached
+                        if p.get("slug") not in self.EXCLUDED_PROPOSALS
+                        and not any(ex in p.get("slug", "") for ex in self.EXCLUDED_PROPOSALS)
+                        and not any(t in p.get("title", "") for t in self.EXCLUDED_TITLES)
+                    ]
+                    return filtered_cached
             except Exception:
                 pass
 
@@ -321,6 +338,17 @@ class SCPCrawler:
                     if "://" in clean_slug:
                         clean_slug = clean_slug.split("/")[-1]
                     clean_slug = clean_slug.replace("old%3A", "old-").replace("%3A", "-")
+
+                    # 1. 过滤排除提案（衔尾蛇、过去与未来、港口上的天空、黑暗再临、黑色内殿、脱逃者）
+                    if clean_slug in self.EXCLUDED_PROPOSALS or any(ex in clean_slug for ex in self.EXCLUDED_PROPOSALS):
+                        continue
+                    if any(t in title for t in self.EXCLUDED_TITLES):
+                        continue
+
+                    # 2. 提案《门面》需要互动进入 offset/1 页面
+                    if clean_slug == "pickman-blank-proposal":
+                        href = "pickman-blank-proposal/offset/1"
+
                     proposals.append({
                         "raw_href": href,
                         "slug": clean_slug,
@@ -373,13 +401,66 @@ class SCPCrawler:
 
             disp = p.get('display', '')[:30].encode(sys.stdout.encoding or 'utf-8', errors='replace').decode(sys.stdout.encoding or 'utf-8', errors='replace')
             print(f"[{idx}/{len(proposals_meta)}] 获取 001提案: {disp}...", end="\r", flush=True)
+            target_url = f"{base_prefix}{raw}" if not raw.startswith("http") else f"{base_prefix}{raw.split('/')[-1]}"
+            p["page_url"] = target_url
+
+            # 针对《廷达洛斯三位一体》：需要进入 offset/1, offset/2, offset/3 三个界面并整合
+            if slug == "jack-ike-s-proposal-ii":
+                if not force and os.path.exists(save_file):
+                    with open(save_file, "r", encoding="utf-8", errors="ignore") as fp:
+                        html_text = fp.read()
+                    if "tindalos-section" in html_text:
+                        results.append((p, html_text))
+                        continue
+
+                offsets = [
+                    (1, "凯撒憎恶 · HATED CAESAR", "https://scp-wiki-cn.wikidot.com/jack-ike-s-proposal-ii/offset/1"),
+                    (2, "领主谴责 · OVERLORD CENSURE", "https://scp-wiki-cn.wikidot.com/jack-ike-s-proposal-ii/offset/2"),
+                    (3, "压抑拒绝 · OPPRESS WITHHOLD", "https://scp-wiki-cn.wikidot.com/jack-ike-s-proposal-ii/offset/3")
+                ]
+                sections_html = []
+                for o_num, o_title, o_public_url in offsets:
+                    local_url = f"{base_prefix}jack-ike-s-proposal-ii/offset/{o_num}"
+                    o_html = None
+                    try:
+                        req = urllib.request.Request(local_url, headers={"User-Agent": "SCPPdfBuilder/1.0"})
+                        with urllib.request.urlopen(req, timeout=5) as r:
+                            if r.status == 200:
+                                o_html = r.read().decode("utf-8", errors="ignore")
+                    except Exception:
+                        pass
+
+                    if not o_html:
+                        try:
+                            req = urllib.request.Request(o_public_url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
+                            with urllib.request.urlopen(req, timeout=12) as r:
+                                o_html = r.read().decode("utf-8", errors="ignore")
+                        except Exception as e:
+                            print(f"\n  [廷达洛斯抓取警告] 无法获取 offset/{o_num}: {e}")
+
+                    if o_html:
+                        o_soup = BeautifulSoup(o_html, "html.parser")
+                        o_pc = o_soup.find("div", id="page-content")
+                        inner = str(o_pc) if o_pc else o_html
+                        sections_html.append(f'<div class="tindalos-section" data-part="{o_num}" data-title="{o_title}">\n{inner}\n</div>')
+
+                combined_html = f'<div id="page-content" class="tindalos-container">\n' + "\n".join(sections_html) + "\n</div>"
+                with open(save_file, "w", encoding="utf-8") as fp:
+                    fp.write(combined_html)
+                results.append((p, combined_html))
+                continue
+
+            # 普通提案缓存检查
             if not force and os.path.exists(save_file):
                 with open(save_file, "r", encoding="utf-8", errors="ignore") as fp:
                     html_text = fp.read()
-                results.append((p, html_text))
-                continue
+                # 若为旧版未互动的门面页面（未包含真实正文 PoI-001 档案），重新下载 offset/1
+                if slug == "pickman-blank-proposal" and "PoI-001" not in html_text:
+                    pass
+                else:
+                    results.append((p, html_text))
+                    continue
 
-            target_url = f"{base_prefix}{raw}" if not raw.startswith("http") else f"{base_prefix}{raw.split('/')[-1]}"
             try:
                 req = urllib.request.Request(target_url, headers={"User-Agent": "SCPPdfBuilder/1.0"})
                 with urllib.request.urlopen(req, timeout=8) as r:

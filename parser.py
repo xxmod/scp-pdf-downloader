@@ -20,7 +20,7 @@ class SCPParser:
         """
         self.crawler = crawler or SCPCrawler()
 
-    def _clean_content_div(self, content_div: Tag, soup: BeautifulSoup, slug: str, context: str = "") -> Tuple[str, List[Dict[str, Any]]]:
+    def _clean_content_div(self, content_div: Tag, soup: BeautifulSoup, slug: str, context: str = "", page_url: str = "") -> Tuple[str, List[Dict[str, Any]]]:
         """
         核心正文清洗流水线：
         1. 清除评级条、脚本、作者推广框、导航条等噪点标签；
@@ -94,7 +94,7 @@ class SCPParser:
 
             img_ext = os.path.splitext(src.split("?")[0])[1] or ".jpg"
             save_name = f"{slug.upper()}_{idx}{img_ext}" if idx > 1 else f"{slug.upper()}{img_ext}"
-            local_img_path = self.crawler.download_image(src, save_name, context=context)
+            local_img_path = self.crawler.download_image(src, save_name, context=context, page_url=page_url)
 
             if local_img_path and os.path.exists(local_img_path):
                 abs_img_uri = f"file:///{local_img_path.replace(os.sep, '/')}"
@@ -127,7 +127,7 @@ class SCPParser:
                 raw_fname = f"extra_{extra_idx}.jpg"
             save_fname = f"{slug.upper()}_{raw_fname}"
 
-            local_img_path = self.crawler.download_image(src, save_fname, context=context)
+            local_img_path = self.crawler.download_image(src, save_fname, context=context, page_url=page_url)
             if local_img_path and os.path.exists(local_img_path):
                 abs_img_uri = f"file:///{local_img_path.replace(os.sep, '/')}"
                 extra_img["src"] = abs_img_uri
@@ -206,6 +206,12 @@ class SCPParser:
         # 5. 标准化 blockquote 为 scpbox
         for bq in content_div.find_all("blockquote"):
             bq["class"] = bq.get("class", []) + ["scpbox"]
+
+        # 5.1 针对提案《进程》等具有深绿边框的诊断框，将深黑填充背景改为白色，杜绝黑底黑字无法阅读
+        for box in content_div.find_all(lambda t: t.has_attr("style") and "#247040" in t["style"]):
+            st = box["style"]
+            st = re.sub(r"background(-color)?\s*:\s*(#1F1C1E|#141414|#000000|#111111|black|rgba?\([^)]+\))", r"background\1: #ffffff", st, flags=re.IGNORECASE)
+            box["style"] = st
 
         # 6. 清理可能写死大宽度的内联样式与浮动，杜绝横向溢出与内容重叠
         for tag in content_div.find_all(lambda t: t.has_attr("style")):
@@ -368,7 +374,7 @@ class SCPParser:
     def parse_scp001_proposal(self, meta: Dict[str, str], html_text: str) -> Dict[str, Any]:
         """
         解析单个 SCP-001 提案页面正文。
-        :param meta: 提案元数据字典（包含 slug, code_name, title, display）
+        :param meta: 提案元数据字典（包含 slug, code_name, title, display, page_url）
         :param html_text: 提案网页原始 HTML
         """
         slug = meta["slug"]
@@ -376,8 +382,57 @@ class SCPParser:
         title = meta.get("title", "")
         title_cn = title if title else code_name
         proposal_context = f"001提案: {meta.get('display', slug)}"
+        page_url = meta.get("page_url", "")
 
         soup = BeautifulSoup(html_text, "html.parser")
+
+        # 针对《廷达洛斯三位一体》：包含 offset/1, offset/2, offset/3 三个独立界面的多节结构
+        tindalos_sections = soup.find_all("div", class_="tindalos-section")
+        if tindalos_sections:
+            combined_html_parts = []
+            all_images = []
+            for sec in tindalos_sections:
+                part_num = sec.get("data-part", "")
+                part_title = sec.get("data-title", f"第 {part_num} 部分")
+
+                # 移除原网页底部的跳转链接与返回上层按钮
+                for cl in sec.find_all("div", class_="customlink"):
+                    cl.decompose()
+                for a in sec.find_all("a"):
+                    if a.get("href") and ("offset" in a.get("href") or "返回上层" in a.get_text()):
+                        parent_p = a.find_parent("p")
+                        if parent_p:
+                            parent_p.decompose()
+                        else:
+                            a.decompose()
+
+                sec_content = sec.find("div", id="page-content") or sec
+                sec_inner, sec_imgs = self._clean_content_div(
+                    sec_content, soup, f"{slug}_p{part_num}",
+                    context=f"{proposal_context} (分部{part_num})",
+                    page_url=page_url
+                )
+                all_images.extend(sec_imgs)
+
+                header_box = f'''<div class="tindalos-part-header" style="margin: 16pt 0 8pt 0; padding: 4pt 8pt; background: #f2f2f2; border-left: 4pt solid #333333;">
+                    <strong style="font-size: 10pt; color: #111111;">【分部 {part_num} · {part_title}】</strong>
+                </div>'''
+                combined_html_parts.append(header_box + sec_inner)
+
+            final_combined_body = '<div class="tindalos-article">' + '<hr style="border: none; border-top: 1px dashed #cccccc; margin: 20pt auto; width: 85%;">' .join(combined_html_parts) + '</div>'
+            return {
+                "num": 0,
+                "slug": slug,
+                "marker": f"#SCPMARK_PROP_{slug}#",
+                "title_en": f"SCP-001 {code_name}",
+                "title_cn": title_cn,
+                "code_name": code_name,
+                "is_hub": False,
+                "is_proposal": True,
+                "html_body": final_combined_body,
+                "images": all_images
+            }
+
         content_div = soup.find("div", id="page-content")
 
         if not content_div:
@@ -394,7 +449,7 @@ class SCPParser:
                 "images": []
             }
 
-        inner_html, images = self._clean_content_div(content_div, soup, slug, context=proposal_context)
+        inner_html, images = self._clean_content_div(content_div, soup, slug, context=proposal_context, page_url=page_url)
 
         return {
             "num": 0,

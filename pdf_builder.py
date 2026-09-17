@@ -189,9 +189,26 @@ class SCPPdfBuilder:
 
         print(f"\n[阶段 4/4] 逐页绘制安全区页眉细线、动态章节标题及居中页数 (总计 {total_pages} 页)...", flush=True)
 
-        # 预先初始化字体对象（全局复用，避免在成百上千页中重复从磁盘解析 20MB 字体表，将后处理耗时从 2 分多钟缩减至 2 秒）
+        # 预先初始化字体对象（全局复用）
         header_font = pymupdf.Font(fontfile=self.cjk_font_file) if self.cjk_font_file else None
         num_font = pymupdf.Font("helv")
+        # 将 CJK 字体以子集方式预先嵌入到文档中，后续页面直接用 fontname 引用，
+        # 避免每页都嵌入全量字体造成文件膨胀
+        cjk_fontname_in_doc = None
+        if self.cjk_font_file:
+            try:
+                # 在第一页嵌入一次，返回嵌入后的 fontname
+                ref = doc[0].insert_text(
+                    pymupdf.Point(-100, -100),  # 页面外不可见区域
+                    "\u200b",  # 零宽空格，仅用于注册字体
+                    fontsize=1,
+                    fontname="cjk",
+                    fontfile=self.cjk_font_file,
+                    color=(1, 1, 1),  # 白色不可见
+                )
+                cjk_fontname_in_doc = "cjk"
+            except Exception:
+                cjk_fontname_in_doc = None
 
         for pno in range(total_pages):
             page_idx = pno + 1
@@ -245,13 +262,20 @@ class SCPPdfBuilder:
                     start_x = line_x0
 
                 try:
+                    insert_kwargs = dict(
+                        fontsize=header_fontsize,
+                        color=(0.25, 0.25, 0.25)
+                    )
+                    if cjk_fontname_in_doc:
+                        # 字体已嵌入，直接引用，不再重复传 fontfile
+                        insert_kwargs["fontname"] = cjk_fontname_in_doc
+                    elif self.cjk_font_file:
+                        insert_kwargs["fontname"] = "cjk"
+                        insert_kwargs["fontfile"] = self.cjk_font_file
                     page.insert_text(
                         pymupdf.Point(start_x, header_text_y),
                         header_text,
-                        fontsize=header_fontsize,
-                        fontname="cjk",
-                        fontfile=self.cjk_font_file,
-                        color=(0.25, 0.25, 0.25)
+                        **insert_kwargs
                     )
                 except Exception:
                     pass
@@ -308,7 +332,12 @@ class SCPPdfBuilder:
         print(f"  - [大纲构建] 成功生成 {len(toc)} 条大纲节点，正在注入 PDF 文件...", flush=True)
         doc.set_toc(toc)
         print(f"  - [保存输出] 正在将全部修改持久化写入: {final_pdf_path}...", flush=True)
-        doc.save(final_pdf_path)
+        doc.save(
+            final_pdf_path,
+            garbage=4,          # 删除冠余对象并嵌入字体子集
+            deflate=True,       # 压缩所有流
+            deflate_images=True # 压缩图像流
+        )
         doc.close()
         print(f"[PDF后处理完成] 成功写入多级大纲与修正页码，最终输出: {final_pdf_path}", flush=True)
 

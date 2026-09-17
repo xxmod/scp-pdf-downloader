@@ -55,7 +55,10 @@ class SCPParser:
             ".heritage-rating-module",
             ".modal-wrapper",
             ".modal",
-            "#toc"
+            "#toc",
+            ".classified-bar",
+            ".class1image",
+            ".image-space"
         ]
         for sel in unwanted_selectors:
             for tag in content_div.select(sel):
@@ -84,6 +87,11 @@ class SCPParser:
             caption_tag = block.find("div", class_="scp-image-caption")
             caption_text = caption_tag.get_text().strip() if caption_tag else ""
 
+            # 过滤 ACS 权限装饰条图片
+            if "classified-bar" in src or "classified-bar" in img_tag.get("alt", ""):
+                block.decompose()
+                continue
+
             img_ext = os.path.splitext(src.split("?")[0])[1] or ".jpg"
             save_name = f"{slug.upper()}_{idx}{img_ext}" if idx > 1 else f"{slug.upper()}{img_ext}"
             local_img_path = self.crawler.download_image(src, save_name, context=context)
@@ -108,8 +116,8 @@ class SCPParser:
             if not src or src.startswith("file:///"):
                 continue
 
-            # 过滤掉无关用户头像或微小图标
-            if any(k in src for k in ["avatar.php", "userkarma.php", "favicon", "local--favicon", "default.png"]):
+            # 过滤掉无关用户头像、微小图标，以及导致巨幅黑块的 ACS 权限条组件图片
+            if any(k in src for k in ["avatar.php", "userkarma.php", "favicon", "local--favicon", "default.png", "classified-bar"]) or "classified-bar" in extra_img.get("alt", ""):
                 extra_img.decompose()
                 continue
 

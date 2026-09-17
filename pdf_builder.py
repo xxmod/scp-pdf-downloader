@@ -53,10 +53,13 @@ class SCPPdfBuilder:
         if os.path.exists(cached_b64):
             with open(cached_b64, "r", encoding="utf-8") as f:
                 return f.read().strip()
-        logo_path = os.path.join(self.work_dir, "scp-pdf-master", "images", "logo.png")
-        if os.path.exists(logo_path):
-            with open(logo_path, "rb") as f:
-                return base64.b64encode(f.read()).decode("utf-8")
+        for p in [
+            os.path.join(self.work_dir, "data", "scp-pdf-master", "images", "logo.png"),
+            os.path.join(self.work_dir, "scp-pdf-master", "images", "logo.png"),
+        ]:
+            if os.path.exists(p):
+                with open(p, "rb") as f:
+                    return base64.b64encode(f.read()).decode("utf-8")
         return ""
 
     def render_html(self, items: List[Dict[str, Any]], version: str = "1.20") -> str:
@@ -94,46 +97,51 @@ class SCPPdfBuilder:
         3. 正文页严格在安全区绘制页眉横线与页脚页码；
         4. 注入原生 PDF 书签大纲 (Bookmarks / TOC)。
         """
-        print("[PDF后处理] 正在分析页面结构并注入大纲与精准页眉页脚...")
+        print("\n[阶段 3/4] 启动 PyMuPDF 结构分析引擎，扫描文档各章节起始位置...", flush=True)
         doc = pymupdf.open(raw_pdf_path)
         total_pages = len(doc)
+        print(f"  - 原始 PDF 总页数: {total_pages} 页，开始逐页分析标记...", flush=True)
 
-        # 构建匹配字典
-        slug_to_item = {item["slug"].lower(): item for item in items}
-        num_to_item = {item["num"]: item for item in items}
+        # 构建匹配字典（基于唯一的 marker，并预先计算无符号的标准化匹配键）
+        marker_to_item = {item["marker"]: item for item in items}
+        norm_to_item = {re.sub(r'[\s_\-]', '', item["marker"]): item for item in items}
 
         # 1. 扫描定位各条目真实正文起始页
-        scp_start_pages: Dict[int, int] = {}
+        item_start_pages: Dict[str, int] = {}
 
         for pno in range(total_pages):
             page_idx = pno + 1
             raw_text = doc[pno].get_text()
+            norm_text = re.sub(r'[\s_\-]', '', raw_text)
 
-            # 寻找章节标记 #SCPMARK{num}#
-            for item in items:
-                num = item["num"]
-                marker = f"#SCPMARK{num}#"
-                if marker in raw_text and num not in scp_start_pages:
-                    scp_start_pages[num] = page_idx
+            # 寻找章节标记 marker（标准化匹配杜绝渲染空格/下划线差异）
+            for norm_m, item_obj in norm_to_item.items():
+                orig_m = item_obj["marker"]
+                if norm_m in norm_text and orig_m not in item_start_pages:
+                    item_start_pages[orig_m] = page_idx
+
+            if page_idx % 250 == 0 or page_idx == total_pages:
+                pct = page_idx / total_pages * 100
+                print(f"  - [扫描章节起始页] 进度: {page_idx}/{total_pages} 页 ({pct:.1f}%) | 已定位 {len(item_start_pages)}/{len(items)} 个章节", flush=True)
 
         # 第 1 篇条目的起始页即为正文的真正起点
-        min_start_p = min(scp_start_pages.values()) if scp_start_pages else 3
+        min_start_p = min(item_start_pages.values()) if item_start_pages else 3
         first_scp_page = min_start_p
         total_toc_pages = first_scp_page - 2
 
-        print(f"  - 目录页范围: 第 2 ~ {first_scp_page - 1} 页 (共 {total_toc_pages} 页)")
-        print(f"  - 正文起始于第 {first_scp_page} 页，成功精确定位 {len(scp_start_pages)} 个 SCP 条目的正文实际页码")
+        print(f"  - 章节结构解析完成: 目录页范围第 2 ~ {first_scp_page - 1} 页 (共 {total_toc_pages} 页)，正文第一页起始于总第 {first_scp_page} 页", flush=True)
 
         # 构建每一页所属的当前章节信息 (用于绘制页眉)
-        sorted_scps = sorted(scp_start_pages.items(), key=lambda x: x[1])
+        sorted_items = sorted(
+            [(marker_to_item[m], p) for m, p in item_start_pages.items()],
+            key=lambda x: x[1]
+        )
         page_to_current_scp: Dict[int, Dict[str, Any]] = {}
 
-        for i, (num, start_p) in enumerate(sorted_scps):
-            end_p = sorted_scps[i + 1][1] if i + 1 < len(sorted_scps) else (total_pages + 1)
-            item_obj = num_to_item.get(num)
-            if item_obj:
-                for p in range(start_p, end_p):
-                    page_to_current_scp[p] = item_obj
+        for i, (item_obj, start_p) in enumerate(sorted_items):
+            end_p = sorted_items[i + 1][1] if i + 1 < len(sorted_items) else (total_pages + 1)
+            for p in range(start_p, end_p):
+                page_to_current_scp[p] = item_obj
 
         # 开始逐页修饰与绘制
         header_line_y = 26.4       # 严格匹配原版绘图坐标
@@ -145,6 +153,8 @@ class SCPPdfBuilder:
         # 正文页码计数从 1 开始
         body_page_counter = 1
 
+        print(f"\n[阶段 4/4] 逐页绘制安全区页眉细线、动态章节标题及居中页数 (总计 {total_pages} 页)...", flush=True)
+
         for pno in range(total_pages):
             page_idx = pno + 1
             page = doc[pno]
@@ -155,14 +165,23 @@ class SCPPdfBuilder:
 
             # 2. 目录页 (第 2 页至 first_scp_page - 1)：绝对不绘制页数
             if page_idx < first_scp_page:
-                # 顶部可选绘制“目录”横线或保持清爽，用户要求“封面与目录不应该有页数”
                 continue
 
             # 3. 正文页：精确绘制页眉横线、章节标题与页脚页数
             item_info = page_to_current_scp.get(page_idx)
             header_text = ""
             if item_info:
-                header_text = f"{item_info['num']}. {item_info['slug'].upper()} {item_info['title_cn']}"
+                if item_info.get("is_hub"):
+                    header_text = "1. SCP-001 等待解密[已锁]"
+                elif item_info.get("is_proposal"):
+                    code_name = item_info.get("code_name", "SCP-001 提案")
+                    title = item_info.get("title_cn", "")
+                    if title and title != code_name:
+                        header_text = f"001. {code_name} {title}"
+                    else:
+                        header_text = f"001. {code_name}"
+                else:
+                    header_text = f"{item_info['num']}. {item_info['slug'].upper()} {item_info['title_cn']}"
 
             # 绘制页眉细横线 (0.4pt，颜色 #999999)
             page.draw_line(
@@ -214,25 +233,48 @@ class SCPPdfBuilder:
                 color=(0.1, 0.1, 0.1)
             )
 
+            if page_idx % 200 == 0 or page_idx == total_pages:
+                pct = page_idx / total_pages * 100
+                cur_desc = header_text if header_text else ("封面" if page_idx == 1 else "目录")
+                print(f"  - [绘制进度] 第 {page_idx}/{total_pages} 页 ({pct:.1f}%) | 正文页码: {body_page_counter - 1} | 章节: {cur_desc[:24]}", flush=True)
+
         # 4. 注入原生 PDF 书签大纲 (TOC Outline)
-        print("[PDF大纲] 正在生成原生 PDF 大纲书签树...")
+        print("  - [大纲构建] 正在生成原生 PDF 多级大纲书签树...", flush=True)
         toc = [
             [1, "封面", 1],
             [1, "目录", 2],
         ]
-        for item in items:
-            num = item["num"]
+
+        hub_item = next((it for it in items if it.get("is_hub")), None)
+        proposals = [it for it in items if it.get("is_proposal")]
+        regular_items = [it for it in items if not it.get("is_hub") and not it.get("is_proposal")]
+
+        if hub_item or proposals:
+            p_hub = item_start_pages.get(hub_item["marker"], first_scp_page) if hub_item else first_scp_page
+            # 一级大纲：SCP-001 提案
+            toc.append([1, "SCP-001 提案", p_hub])
+            if hub_item:
+                toc.append([2, "SCP-001 等待解密 [已锁]", p_hub])
+            for prop in proposals:
+                p_prop = item_start_pages.get(prop["marker"], first_scp_page)
+                code_name = prop.get("code_name", "SCP-001 提案")
+                title = prop.get("title_cn", "")
+                b_title = f"{code_name} - {title}" if (title and title != code_name) else f"{code_name}"
+                toc.append([2, b_title, p_prop])
+
+        for item in regular_items:
             slug_up = item["slug"].upper()
             title = item["title_cn"]
-            p_target = scp_start_pages.get(num, first_scp_page)
-            # 大纲标题格式: SCP-002 “生活”室
+            p_target = item_start_pages.get(item["marker"], first_scp_page)
             bookmark_title = f"{slug_up} {title}"
             toc.append([1, bookmark_title, p_target])
 
+        print(f"  - [大纲构建] 成功生成 {len(toc)} 条大纲节点，正在注入 PDF 文件...", flush=True)
         doc.set_toc(toc)
+        print(f"  - [保存输出] 正在将全部修改持久化写入: {final_pdf_path}...", flush=True)
         doc.save(final_pdf_path)
         doc.close()
-        print(f"[PDF后处理完成] 成功写入大纲与修正页码，最终输出: {final_pdf_path}")
+        print(f"[PDF后处理完成] 成功写入多级大纲与修正页码，最终输出: {final_pdf_path}", flush=True)
 
     def build_pdf(self, items: List[Dict[str, Any]], output_pdf_path: str, version: str = "1.20") -> str:
         """
@@ -241,22 +283,26 @@ class SCPPdfBuilder:
         abs_output_path = os.path.abspath(output_pdf_path)
         os.makedirs(os.path.dirname(abs_output_path), exist_ok=True)
 
-        print(f"[PDF构建] 正在渲染包含 {len(items)} 个条目的书籍 HTML...")
+        print(f"\n[阶段 1/4] 正在根据 Jinja2 模板渲染包含 {len(items)} 个条目的完整书籍 HTML...", flush=True)
         rendered_html = self.render_html(items, version=version)
 
         temp_html_path = os.path.join(self.work_dir, "data", "book_render_temp.html")
         with open(temp_html_path, "w", encoding="utf-8") as f:
             f.write(rendered_html)
+        html_mb = os.path.getsize(temp_html_path) / (1024 * 1024)
+        print(f"  - HTML 渲染写入完成: {temp_html_path} ({html_mb:.2f} MB)", flush=True)
 
         raw_pdf_path = os.path.join(self.work_dir, "data", "raw_rendered.pdf")
 
-        print("[PDF构建] 启动 Chromium 引擎进行版心排版...")
+        print("\n[阶段 2/4] 启动 Playwright Chromium 无头浏览器进行核心版心排版...", flush=True)
         with sync_playwright() as p:
             browser = p.chromium.launch()
             page = browser.new_page()
             
             file_url = f"file:///{temp_html_path.replace(os.sep, '/')}"
+            print(f"  - 正在加载本地文档 DOM 与全部图像资源: {file_url[:50]}...", flush=True)
             page.goto(file_url, wait_until="networkidle")
+            print(f"  - 页面 DOM 与样式加载完成，开始执行全书分页排版（共收录 {len(items)} 篇文档，排版耗时与文档篇幅相关，请稍候）...", flush=True)
 
             # 导出纯净版心的 PDF (关闭浏览器自带的 header/footer，边距严格匹配原版 0.5cm)
             page.pdf(
@@ -275,6 +321,12 @@ class SCPPdfBuilder:
             )
 
             browser.close()
+
+        raw_doc = pymupdf.open(raw_pdf_path)
+        actual_total_pages = len(raw_doc)
+        raw_doc.close()
+        raw_mb = os.path.getsize(raw_pdf_path) / (1024 * 1024)
+        print(f"  - Chromium 版心排版渲染成功完成！实际总页数: {actual_total_pages} 页，原始 PDF 大小: {raw_mb:.2f} MB", flush=True)
 
         # 使用 PyMuPDF 进行后处理
         self._post_process_pdf(raw_pdf_path, abs_output_path, items)

@@ -162,11 +162,12 @@ class SCPCrawler:
             print(f"[{slug}] 请求异常 ({e})，自动跳过")
             return None
 
-    def download_image(self, img_url: str, save_name: str) -> Optional[str]:
+    def download_image(self, img_url: str, save_name: str, context: str = "") -> Optional[str]:
         """
         下载并保存图片到本地 images 缓存目录。
         :param img_url: 页面中的图片相对或绝对路径
         :param save_name: 保存的文件名
+        :param context: 调用上下文描述（如文章或提案标题），用于定位日志
         :return: 本地文件的相对或绝对路径，下载失败返回 None
         """
         save_path = os.path.join(self.image_dir, save_name)
@@ -178,8 +179,6 @@ class SCPCrawler:
             full_url = img_url
         elif img_url.startswith("../"):
             # 相对路径，如 ../scp-wiki.wdfiles.com/...
-            # base_url 形如 http://192.168.6.138:8080/content/scp-wiki-cn_2026-05/scp-wiki-cn.wikidot.com/scp-
-            # 去除末尾的 scp-wiki-cn.wikidot.com/scp-
             parent_dir = self.content_base_url.rsplit("/", 2)[0]
             rel_path = img_url[3:] # 去除 ../
             full_url = f"{parent_dir}/{rel_path}"
@@ -198,7 +197,8 @@ class SCPCrawler:
                     self._compress_image(save_path, quality=60)
                     return save_path
         except Exception as e:
-            print(f"  [图片下载警告] 无法下载图片 {img_url}: {e}")
+            prefix = f"[{context}] " if context else ""
+            print(f"  [图片下载警告] {prefix}无法下载图片 {img_url}: {e}", flush=True)
             return None
 
     def _compress_image(self, image_path: str, quality: int = 60):
@@ -248,3 +248,115 @@ class SCPCrawler:
 
         print(f"\n[抓取完成] 成功下载/已缓存: {success_count} 篇，跳过/不存在: {skip_count} 篇")
         return results
+
+    def fetch_scp001_proposals_meta(self, force: bool = False) -> List[Dict[str, str]]:
+        """
+        从本地镜像的 scp-001 枢纽页面解析所有提案的元数据列表。
+        """
+        cache_file = os.path.join(self.cache_dir, "proposals_cache.json")
+        if not force and os.path.exists(cache_file):
+            try:
+                with open(cache_file, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception:
+                pass
+
+        hub_url = self.content_base_url.rsplit("scp-", 1)[0] + "scp-001"
+        try:
+            req = urllib.request.Request(hub_url, headers={"User-Agent": "SCPPdfBuilder/1.0"})
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                html = resp.read().decode("utf-8", errors="ignore")
+        except Exception as e:
+            print(f"[SCP-001抓取错误] 无法获取 001 枢纽页: {e}")
+            return []
+
+        soup = BeautifulSoup(html, "html.parser")
+        pc = soup.find("div", id="page-content")
+        if not pc:
+            return []
+
+        proposals = []
+        for p in pc.find_all("p"):
+            a = p.find("a")
+            if a and a.get("href"):
+                href = a["href"].strip()
+                code_name = a.get_text().strip()
+                full_text = p.get_text().strip()
+                if "代号：" in code_name or (" - " in full_text and "proposal" in href):
+                    parts = full_text.split(" - ", 1)
+                    title = parts[1].strip() if len(parts) > 1 else ""
+                    clean_slug = href
+                    if "://" in clean_slug:
+                        clean_slug = clean_slug.split("/")[-1]
+                    clean_slug = clean_slug.replace("old%3A", "old-").replace("%3A", "-")
+                    proposals.append({
+                        "raw_href": href,
+                        "slug": clean_slug,
+                        "code_name": code_name,
+                        "title": title,
+                        "display": f"{code_name} - {title}" if title else code_name
+                    })
+
+        with open(cache_file, "w", encoding="utf-8") as f:
+            json.dump(proposals, f, ensure_ascii=False, indent=2)
+
+        return proposals
+
+    def download_scp001_hub_and_proposals(self, force: bool = False) -> Tuple[Optional[str], List[Tuple[Dict[str, str], str]]]:
+        """
+        下载 SCP-001 枢纽页面及全部提案 HTML。
+        :return: (hub_html, [(proposal_meta, html_text), ...])
+        """
+        proposals_meta = self.fetch_scp001_proposals_meta(force=force)
+        print(f"\n[SCP-001抓取] 正在处理 SCP-001 枢纽页与 {len(proposals_meta)} 个提案...")
+
+        # 1. 枢纽页
+        hub_save_path = os.path.join(self.html_dir, "scp-001.html")
+        hub_html = None
+        if not force and os.path.exists(hub_save_path):
+            with open(hub_save_path, "r", encoding="utf-8", errors="ignore") as f:
+                hub_html = f.read()
+        else:
+            hub_url = self.content_base_url.rsplit("scp-", 1)[0] + "scp-001"
+            try:
+                req = urllib.request.Request(hub_url, headers={"User-Agent": "SCPPdfBuilder/1.0"})
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    raw_data = resp.read()
+                    with open(hub_save_path, "wb") as fp:
+                        fp.write(raw_data)
+                    hub_html = raw_data.decode("utf-8", errors="ignore")
+            except Exception as e:
+                print(f"  [SCP-001枢纽页下载错误]: {e}")
+
+        # 2. 提案页
+        proposals_dir = os.path.join(self.html_dir, "proposals")
+        os.makedirs(proposals_dir, exist_ok=True)
+        base_prefix = self.content_base_url.rsplit("scp-", 1)[0]
+
+        results = []
+        for idx, p in enumerate(proposals_meta, start=1):
+            slug = p["slug"]
+            raw = p["raw_href"]
+            save_file = os.path.join(proposals_dir, f"{slug}.html")
+
+            print(f"[{idx}/{len(proposals_meta)}] 获取 001提案: {p['display'][:30]}...", end="\r", flush=True)
+            if not force and os.path.exists(save_file):
+                with open(save_file, "r", encoding="utf-8", errors="ignore") as fp:
+                    html_text = fp.read()
+                results.append((p, html_text))
+                continue
+
+            target_url = f"{base_prefix}{raw}" if not raw.startswith("http") else f"{base_prefix}{raw.split('/')[-1]}"
+            try:
+                req = urllib.request.Request(target_url, headers={"User-Agent": "SCPPdfBuilder/1.0"})
+                with urllib.request.urlopen(req, timeout=8) as r:
+                    raw_bytes = r.read()
+                    with open(save_file, "wb") as fp:
+                        fp.write(raw_bytes)
+                    html_text = raw_bytes.decode("utf-8", errors="ignore")
+                results.append((p, html_text))
+            except Exception:
+                pass
+
+        print(f"\n[SCP-001抓取完成] 成功获取 {len(results)} 个提案文档。")
+        return hub_html, results

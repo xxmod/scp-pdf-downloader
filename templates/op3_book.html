@@ -30,14 +30,8 @@
 
     <div class="cover-sub-title">内部人员参考手册</div>
 
-    <div class="cover-stamp-container">
-      <div class="cover-stamp">
-        <span>{{ random_stamp_code }}</span>
-      </div>
-    </div>
-
     <div class="cover-footer">
-      <div>SCP基金会中国分部</div>
+      <div class="cover-author">XXMOD</div>
       <div class="cover-version">版本 {{ version }} - {{ date_str }}</div>
     </div>
   </div>
@@ -47,26 +41,62 @@
     <h2 class="toc-title">目&nbsp;&nbsp;录</h2>
     <ul class="toc-list">
       {% for item in items %}
-      <li class="toc-item">
-        <a class="toc-link" href="#{{ item.slug }}">{{ item.num }}. {{ item.slug|upper }} {{ item.title_cn }}</a>
-      </li>
+        {% if item.is_hub %}
+          <li class="toc-item toc-item-hub">
+            <a class="toc-link" href="#{{ item.slug }}">1. SCP-001 提案集</a>
+          </li>
+          <li class="toc-item toc-item-sub">
+            <a class="toc-link" href="#{{ item.slug }}">&nbsp;&nbsp;&nbsp;&nbsp;等待解密 [已锁]</a>
+          </li>
+        {% elif item.is_proposal %}
+          <li class="toc-item toc-item-sub">
+            <a class="toc-link" href="#{{ item.slug }}">&nbsp;&nbsp;&nbsp;&nbsp;{{ item.code_name }}{% if item.title_cn and item.title_cn != item.code_name %} - {{ item.title_cn }}{% endif %}</a>
+          </li>
+        {% else %}
+          <li class="toc-item">
+            <a class="toc-link" href="#{{ item.slug }}">{{ item.num }}. {{ item.slug|upper }} {{ item.title_cn }}</a>
+          </li>
+        {% endif %}
       {% endfor %}
     </ul>
   </div>
 
   <!-- ==================== 正文章节部分 (无分卷页) ==================== -->
   {% for item in items %}
-    <section class="chapter" id="{{ item.slug }}" data-scp-num="{{ item.num }}">
-      <div style="font-size:1pt; line-height:1pt; height:1px; color:#ffffff; overflow:hidden;">#SCPMARK{{ item.num }}#</div>
-      <div class="chapter-header">
-        <div class="chapter-number-en">{{ item.num }}.&nbsp;&nbsp;{{ item.title_en }}</div>
-        <div class="chapter-title-cn">{{ item.slug|upper }} {{ item.title_cn }}</div>
-      </div>
-
-      <div class="chapter-content">
-        {{ item.html_body | safe }}
-      </div>
-    </section>
+    {% if item.is_hub %}
+      <section class="chapter chapter-hub" id="{{ item.slug }}">
+        <div style="font-size:1pt; line-height:1pt; height:1px; color:#ffffff; overflow:hidden;">{{ item.marker }}</div>
+        <div class="chapter-header">
+          <div class="chapter-number-en">1.&nbsp;&nbsp;{{ item.title_en }}</div>
+          <div class="chapter-title-cn">{{ item.slug|upper }} {{ item.title_cn }}</div>
+        </div>
+        <div class="chapter-content">
+          {{ item.html_body | safe }}
+        </div>
+      </section>
+    {% elif item.is_proposal %}
+      <section class="chapter chapter-proposal" id="{{ item.slug }}">
+        <div style="font-size:1pt; line-height:1pt; height:1px; color:#ffffff; overflow:hidden;">{{ item.marker }}</div>
+        <div class="chapter-header">
+          <div class="chapter-number-en">SCP-001&nbsp;&nbsp;{{ item.code_name }}</div>
+          <div class="chapter-title-cn">SCP-001 {{ item.title_cn }}</div>
+        </div>
+        <div class="chapter-content">
+          {{ item.html_body | safe }}
+        </div>
+      </section>
+    {% else %}
+      <section class="chapter" id="{{ item.slug }}" data-scp-num="{{ item.num }}">
+        <div style="font-size:1pt; line-height:1pt; height:1px; color:#ffffff; overflow:hidden;">{{ item.marker }}</div>
+        <div class="chapter-header">
+          <div class="chapter-number-en">{{ item.num }}.&nbsp;&nbsp;{{ item.title_en }}</div>
+          <div class="chapter-title-cn">{{ item.slug|upper }} {{ item.title_cn }}</div>
+        </div>
+        <div class="chapter-content">
+          {{ item.html_body | safe }}
+        </div>
+      </section>
+    {% endif %}
   {% endfor %}
 
 </body>

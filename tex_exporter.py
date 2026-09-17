@@ -7,20 +7,36 @@ LaTeX 源码导出模块
 
 import os
 import re
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from bs4 import BeautifulSoup
 
 
 class SCPTexExporter:
-    def __init__(self, master_dir: str = "scp-pdf-master"):
+    def __init__(self, master_dir: Optional[str] = None):
         """
         初始化 LaTeX 导出器。
-        :param master_dir: scp-pdf-master 项目根目录
+        优先寻找用户重新保存的 data/scp-pdf-master，若不存在则回退至当前目录的 scp-pdf-master。
+        :param master_dir: scp-pdf-master 项目根目录（可选）
         """
-        self.master_dir = os.path.abspath(master_dir)
+        if master_dir:
+            self.master_dir = os.path.abspath(master_dir)
+        else:
+            candidates = [
+                os.path.join("data", "scp-pdf-master"),
+                "scp-pdf-master"
+            ]
+            chosen = "scp-pdf-master"
+            for c in candidates:
+                if os.path.exists(c):
+                    chosen = c
+                    break
+            self.master_dir = os.path.abspath(chosen)
+
+        self.part00_dir = os.path.join(self.master_dir, "part00")
         self.part01_dir = os.path.join(self.master_dir, "part01")
         self.part02_dir = os.path.join(self.master_dir, "part02")
         self.images_dir = os.path.join(self.master_dir, "images")
+        os.makedirs(self.images_dir, exist_ok=True)
 
     def _html_to_latex(self, html_text: str) -> str:
         """

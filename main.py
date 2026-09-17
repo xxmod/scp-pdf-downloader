@@ -119,27 +119,30 @@ def main():
 
     # 4. 可选: 导出 LaTeX 源码并补齐 scp-pdf-master (重点补充 191~200 等缺失篇目)
     if args.export_tex:
-        print("\n[LaTeX导出] 检查并补全 scp-pdf-master 源码...")
-        exporter = SCPTexExporter()
-        for item in parsed_items:
-            num = item["num"]
-            # 如果是 101~200 区间，输出到 part02
-            if 101 <= num <= 200:
-                tex_file = os.path.join(exporter.part02_dir, f"{num}.tex")
-                if not os.path.exists(tex_file):
-                    tex_code = exporter.export_item(item)
-                    with open(tex_file, "w", encoding="utf-8") as f:
-                        f.write(tex_code)
-                    print(f"  - 已补全 LaTeX 篇目: part02/{num}.tex")
-                # 同步图片到 scp-pdf-master/images
-                for img_info in item.get("images", []):
-                    src_img = img_info["path"]
-                    dst_img = os.path.join(exporter.images_dir, os.path.basename(src_img))
-                    if os.path.exists(src_img) and not os.path.exists(dst_img):
-                        shutil.copy2(src_img, dst_img)
+        if os.path.exists("scp-pdf-master"):
+            print("\n[LaTeX导出] 检查并补全 scp-pdf-master 源码...")
+            exporter = SCPTexExporter()
+            for item in parsed_items:
+                num = item["num"]
+                # 如果是 101~200 区间，输出到 part02
+                if 101 <= num <= 200:
+                    tex_file = os.path.join(exporter.part02_dir, f"{num}.tex")
+                    if not os.path.exists(tex_file):
+                        tex_code = exporter.export_item(item)
+                        with open(tex_file, "w", encoding="utf-8") as f:
+                            f.write(tex_code)
+                        print(f"  - 已补全 LaTeX 篇目: part02/{num}.tex")
+                    # 同步图片到 scp-pdf-master/images
+                    for img_info in item.get("images", []):
+                        src_img = img_info["path"]
+                        dst_img = os.path.join(exporter.images_dir, os.path.basename(src_img))
+                        if os.path.exists(src_img) and not os.path.exists(dst_img):
+                            shutil.copy2(src_img, dst_img)
 
-        # 更新 part02 索引
-        exporter.update_part02_index(start_num=191, end_num=200)
+            # 更新 part02 索引
+            exporter.update_part02_index(start_num=191, end_num=200)
+        else:
+            print("\n[LaTeX导出] 未检测到 scp-pdf-master 源码目录，跳过 LaTeX 补全。")
 
     # 5. 高保真 PDF 构建
     print("\n[PDF生成] 启动 Playwright 引擎渲染并合成 PDF...")

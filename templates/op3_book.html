@@ -6,7 +6,6 @@
   <style>
 {{ inline_css | safe }}
 
-    /* 额外的打印专属修饰 */
     @media print {
       body {
         -webkit-print-color-adjust: exact;
@@ -18,7 +17,7 @@
 <body>
 
   <!-- ==================== 封面页 ==================== -->
-  <div class="cover-page">
+  <div class="cover-page" id="cover">
     <div class="cover-header">
       <img class="cover-logo" src="data:image/png;base64,{{ logo_base64 }}" alt="SCP Foundation Logo">
       <div class="cover-header-text">
@@ -44,7 +43,7 @@
   </div>
 
   <!-- ==================== 目录页 ==================== -->
-  <div class="toc-page">
+  <div class="toc-page" id="toc">
     <h2 class="toc-title">目&nbsp;&nbsp;录</h2>
     <ul class="toc-list">
       {% for item in items %}
@@ -55,22 +54,10 @@
     </ul>
   </div>
 
-  <!-- ==================== 正文部分 ==================== -->
-  {% set current_part = 0 %}
+  <!-- ==================== 正文章节部分 (无分卷页) ==================== -->
   {% for item in items %}
-
-    <!-- 分卷提示页判断 (如 2~100 为第一卷，101~200 为第二卷) -->
-    {% set part_idx = (item.num - 1) // 100 + 1 %}
-    {% if part_idx != current_part %}
-      {% set current_part = part_idx %}
-      <div class="part-page">
-        <div class="part-number">第 {{ current_part }} 卷</div>
-        <div class="part-title">SCP-{{ "%03d"|format((current_part - 1) * 100 + 1 if (current_part - 1) * 100 + 1 > 1 else 2) }} ~ {{ "%03d"|format(current_part * 100) }}</div>
-      </div>
-    {% endif %}
-
-    <!-- 单个 SCP 条目页面 -->
-    <section class="chapter" id="{{ item.slug }}">
+    <section class="chapter" id="{{ item.slug }}" data-scp-num="{{ item.num }}">
+      <div style="font-size:1pt; line-height:1pt; height:1px; color:#ffffff; overflow:hidden;">#SCPMARK{{ item.num }}#</div>
       <div class="chapter-header">
         <div class="chapter-number-en">{{ item.num }}.&nbsp;&nbsp;{{ item.title_en }}</div>
         <div class="chapter-title-cn">{{ item.slug|upper }} {{ item.title_cn }}</div>
@@ -80,7 +67,6 @@
         {{ item.html_body | safe }}
       </div>
     </section>
-
   {% endfor %}
 
 </body>

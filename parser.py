@@ -98,7 +98,26 @@ class SCPParser:
             else:
                 block.decompose()
 
-        # 3. 处理折叠块 (collapsible-block)：在打印版中直接展开其内容
+        # 3. 深度清洗授权/引用块：移除图像版权信息（文件名、图像作者等）及授权指南，只保留正文主引用
+        for lic in content_div.find_all(lambda tag: tag.name == "div" and ("licensebox" in tag.get("class", []) or "授权" in tag.get_text())):
+            for bq in list(lic.find_all("blockquote")):
+                bq_text = bq.get_text()
+                if any(k in bq_text for k in ["文件名：", "图像作者", "图像名称", "图像名：", "授权协议：", "派生于"]):
+                    bq.decompose()
+            for p in list(lic.find_all(["p", "a"])):
+                if p.decomposed:
+                    continue
+                if "授权指南" in p.get_text() or "licensing-guide" in str(p.get("href", "")):
+                    parent_p = p.find_parent("p") if p.name == "a" else p
+                    if parent_p:
+                        parent_p.decompose()
+
+        for bq in list(content_div.find_all("blockquote")):
+            bq_text = bq.get_text()
+            if "文件名：" in bq_text and "图像作者" in bq_text:
+                bq.decompose()
+
+        # 4. 处理折叠块 (collapsible-block)：在打印版中直接展开其内容
         for fold in content_div.find_all("div", class_="collapsible-block"):
             unfolded = fold.find("div", class_="collapsible-block-content")
             if unfolded:
@@ -117,11 +136,19 @@ class SCPParser:
             else:
                 fold.decompose()
 
-        # 4. 标准化 blockquote 为 scpbox
+        # 5. 标准化 blockquote 为 scpbox
         for bq in content_div.find_all("blockquote"):
             bq["class"] = bq.get("class", []) + ["scpbox"]
 
-        # 5. 关键标签加粗规范化（项目编号、项目等级、特殊收容措施、描述）
+        # 6. 清理可能写死大宽度的内联样式，杜绝横向溢出破坏全局缩放
+        for tag in content_div.find_all(lambda t: t.has_attr("style")):
+            st = tag["style"]
+            if re.search(r"width:\s*\d{3,}px", st):
+                tag["style"] = re.sub(r"width:\s*\d{3,}px", "max-width: 100%", st)
+            if "margin" in tag["style"] and re.search(r"margin:\s*[^;]*\d{2,}px", tag["style"]):
+                tag["style"] = re.sub(r"margin:\s*[^;]+;", "margin: 8pt auto;", tag["style"])
+
+        # 7. 关键标签加粗规范化（项目编号、项目等级、特殊收容措施、描述）
         # 先去除可能已存在的标签外层 strong，再统一处理
         body_html = str(content_div)
         labels = ["项目编号", "项目等级", "特殊收容措施", "描述", "附录"]

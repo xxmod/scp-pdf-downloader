@@ -194,10 +194,31 @@ class SCPCrawler:
                 if resp.status == 200:
                     with open(save_path, "wb") as f:
                         f.write(resp.read())
+                    # 用户要求：将图片压缩，图片质量在60即可
+                    self._compress_image(save_path, quality=60)
                     return save_path
         except Exception as e:
             print(f"  [图片下载警告] 无法下载图片 {img_url}: {e}")
             return None
+
+    def _compress_image(self, image_path: str, quality: int = 60):
+        """将图片压缩为 quality=60 的 JPEG 格式以减小体积"""
+        try:
+            from PIL import Image
+            with Image.open(image_path) as img:
+                if img.mode in ('RGBA', 'LA') or (img.mode == 'P' and 'transparency' in img.info):
+                    bg = Image.new('RGB', img.size, (255, 255, 255))
+                    if img.mode == 'P':
+                        img = img.convert('RGBA')
+                    bg.paste(img, mask=img.split()[-1])
+                    target = bg
+                else:
+                    target = img.convert('RGB')
+                temp_path = image_path + ".tmp.jpg"
+                target.save(temp_path, 'JPEG', quality=quality, optimize=True)
+            os.replace(temp_path, image_path)
+        except Exception as e:
+            pass
 
     def download_range(self, start_id: int, end_id: int, force: bool = False) -> List[Tuple[int, str]]:
         """

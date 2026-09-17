@@ -101,7 +101,7 @@ def main():
     print("=" * 60)
 
     # 1. 初始化爬虫并建立官方标题索引
-    crawler = SCPCrawler(base_url=args.base_url)
+    crawler = SCPCrawler(base_url=args.base_url, skip_download=args.skip_download)
     titles_dict = crawler.fetch_series_titles()
 
     parsed_items: List[Dict[str, Any]] = []

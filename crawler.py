@@ -6,6 +6,7 @@ SCP 档案网络下载与缓存模块
 """
 
 import os
+import sys
 import re
 import json
 import urllib.request
@@ -17,14 +18,16 @@ from typing import Dict, List, Optional, Tuple
 
 class SCPCrawler:
     def __init__(self, base_url: str = "http://192.168.6.138:8080/viewer#scp-wiki-cn_2026-05/scp-wiki-cn.wikidot.com/scp-",
-                 cache_dir: str = "data"):
+                 cache_dir: str = "data", skip_download: bool = False):
         """
         初始化 SCP 爬虫。
         :param base_url: 以 scp- 结尾的页面 URL 前缀（如 viewer# 形式或 content 形式）
         :param cache_dir: 本地缓存根目录
+        :param skip_download: 是否启用完全离线模式（跳过一切未命中缓存的网络请求）
         """
         self.raw_base_url = base_url.strip()
         self.cache_dir = os.path.abspath(cache_dir)
+        self.skip_download = skip_download
         self.html_dir = os.path.join(self.cache_dir, "html")
         self.image_dir = os.path.join(self.cache_dir, "images")
         
@@ -35,6 +38,16 @@ class SCPCrawler:
         self.content_base_url, self.server_root = self._normalize_base_url(self.raw_base_url)
         self.titles_dict: Dict[int, str] = {}
         self.titles_cache_path = os.path.join(self.cache_dir, "titles_cache.json")
+        
+        # 失败/404 图片黑名单缓存，避免每次构建重复重试无用网络连接
+        self.failed_images_cache_path = os.path.join(self.cache_dir, "failed_images_cache.json")
+        self.failed_images = set()
+        if os.path.exists(self.failed_images_cache_path):
+            try:
+                with open(self.failed_images_cache_path, "r", encoding="utf-8") as fp:
+                    self.failed_images = set(json.load(fp))
+            except Exception:
+                self.failed_images = set()
 
     def _normalize_base_url(self, raw_url: str) -> Tuple[str, str]:
         """
@@ -174,6 +187,14 @@ class SCPCrawler:
         if os.path.exists(save_path) and os.path.getsize(save_path) > 0:
             return save_path
 
+        # 离线模式：如果启用了 --skip-download 且本地无图，直接返回 None，杜绝阻塞网络请求
+        if self.skip_download:
+            return None
+
+        # 黑名单拦截：若该图片此前已确认 404 或失效，直接返回 None，耗时 0 毫秒
+        if img_url in self.failed_images:
+            return None
+
         # 拼接绝对请求 URL
         if img_url.startswith("http://") or img_url.startswith("https://"):
             full_url = img_url
@@ -189,7 +210,7 @@ class SCPCrawler:
 
         try:
             req = urllib.request.Request(full_url, headers={"User-Agent": "SCPPdfBuilder/1.0"})
-            with urllib.request.urlopen(req, timeout=8) as resp:
+            with urllib.request.urlopen(req, timeout=3) as resp:
                 if resp.status == 200:
                     with open(save_path, "wb") as f:
                         f.write(resp.read())
@@ -197,8 +218,16 @@ class SCPCrawler:
                     self._compress_image(save_path, quality=60)
                     return save_path
         except Exception as e:
+            # 记录失败图片到黑名单并持久化
+            self.failed_images.add(img_url)
+            try:
+                with open(self.failed_images_cache_path, "w", encoding="utf-8") as fp:
+                    json.dump(list(self.failed_images), fp, ensure_ascii=False)
+            except Exception:
+                pass
+
             prefix = f"[{context}] " if context else ""
-            print(f"  [图片下载警告] {prefix}无法下载图片 {img_url}: {e}", flush=True)
+            print(f"  [图片下载警告] {prefix}无法下载图片 {img_url}: {e} (已加入黑名单跳过后续重试)", flush=True)
             return None
 
     def _compress_image(self, image_path: str, quality: int = 60):
@@ -342,7 +371,8 @@ class SCPCrawler:
             raw = p["raw_href"]
             save_file = os.path.join(proposals_dir, f"{slug}.html")
 
-            print(f"[{idx}/{len(proposals_meta)}] 获取 001提案: {p['display'][:30]}...", end="\r", flush=True)
+            disp = p.get('display', '')[:30].encode(sys.stdout.encoding or 'utf-8', errors='replace').decode(sys.stdout.encoding or 'utf-8', errors='replace')
+            print(f"[{idx}/{len(proposals_meta)}] 获取 001提案: {disp}...", end="\r", flush=True)
             if not force and os.path.exists(save_file):
                 with open(save_file, "r", encoding="utf-8", errors="ignore") as fp:
                     html_text = fp.read()

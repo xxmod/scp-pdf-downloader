@@ -53,6 +53,17 @@ div, section, blockquote, table, p, pre {
   box-sizing: border-box !important;
 }
 
+/* 隐藏繁体中文节点，消除 ACS 异常条简繁体重复 */
+.lang-tr {
+  display: none !important;
+}
+
+/* 消除浮动造成的移动端挤压重叠 */
+.anom-bar-container, .anom-bar {
+  max-width: 100% !important;
+  margin: 8pt auto !important;
+}
+
 /* 分页控制 */
 .page-break {
   page-break-before: always;

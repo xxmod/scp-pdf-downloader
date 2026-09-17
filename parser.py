@@ -58,11 +58,30 @@ class SCPParser:
             ".comments-box",
             "#comments-content",
             ".options-title",
-            "#page-version-info"
+            "#page-version-info",
+            # 新增：作者推广条与作品信息栏
+            ".authorlink-wrapper",
+            ".authorbox",
+            ".authorcontent",
+            ".info-container",
+            ".heritage-rating-module",
+            ".modal-wrapper",
+            ".modal",
+            "#toc"
         ]
         for sel in unwanted_selectors:
             for tag in content_div.select(sel):
                 tag.decompose()
+
+        # 移除 ACS 异常分类条及文档中的繁体中文标签，消除“项目编号：項目編號：”双语重复
+        for tr_tag in content_div.find_all(class_="lang-tr"):
+            tr_tag.decompose()
+
+        # 移除正文中散落的作者推广文案（如“喜欢这篇skip？”）
+        for promo in content_div.find_all(["div", "p"]):
+            promo_text = promo.get_text()
+            if "喜欢这篇skip" in promo_text or "该作者的更多作品" in promo_text:
+                promo.decompose()
 
         # 2. 提取与处理图片块 (div.scp-image-block)
         images = []
@@ -74,17 +93,14 @@ class SCPParser:
                 continue
 
             src = img_tag["src"]
-            # 提取 caption
             caption_tag = block.find("div", class_="scp-image-caption")
             caption_text = caption_tag.get_text().strip() if caption_tag else ""
 
-            # 保存图片到本地
             img_ext = os.path.splitext(src.split("?")[0])[1] or ".jpg"
             save_name = f"{slug.upper()}_{idx}{img_ext}" if idx > 1 else f"{slug.upper()}{img_ext}"
             local_img_path = self.crawler.download_image(src, save_name)
 
             if local_img_path and os.path.exists(local_img_path):
-                # 转为供 HTML 模板使用的绝对 file:/// URI 路径，彻底杜绝相对路径偏差
                 abs_img_uri = f"file:///{local_img_path.replace(os.sep, '/')}"
                 new_container = soup.new_tag("div", **{"class": "scp-image-container"})
                 new_img = soup.new_tag("img", **{"class": "scp-image", "src": abs_img_uri})
@@ -97,6 +113,34 @@ class SCPParser:
                 images.append({"path": local_img_path, "caption": caption_text})
             else:
                 block.decompose()
+
+        # 2.2 处理表格、独立 div 等非标准位置的全部散落 img 标签，彻底避免破图图标
+        for extra_idx, extra_img in enumerate(content_div.find_all("img"), start=1):
+            # 若已是规范化的本地绝对路径，则跳过
+            src = extra_img.get("src", "")
+            if not src or src.startswith("file:///"):
+                continue
+
+            # 过滤掉无关用户头像或微小图标
+            if any(k in src for k in ["avatar.php", "userkarma.php", "favicon", "local--favicon", "default.png"]):
+                extra_img.decompose()
+                continue
+
+            # 下载非标准插图（支持 wdfiles、表格插图、警告框Logo等）
+            raw_fname = os.path.basename(src.split("?")[0])
+            if not raw_fname or len(raw_fname) > 50:
+                raw_fname = f"extra_{extra_idx}.jpg"
+            save_fname = f"{slug.upper()}_{raw_fname}"
+
+            local_img_path = self.crawler.download_image(src, save_fname)
+            if local_img_path and os.path.exists(local_img_path):
+                abs_img_uri = f"file:///{local_img_path.replace(os.sep, '/')}"
+                extra_img["src"] = abs_img_uri
+                extra_img["style"] = (extra_img.get("style", "") + "; max-width: 100%; height: auto;").strip("; ")
+                images.append({"path": local_img_path, "caption": ""})
+            else:
+                # 严密防线：如果下载失败或本地不存在，直接销毁该 img 标签，决不在 PDF 中留下破图图标！
+                extra_img.decompose()
 
         # 3. 深度清洗授权/引用块：移除图像版权信息（文件名、图像作者等）及授权指南，只保留正文主引用
         for lic in content_div.find_all(lambda tag: tag.name == "div" and ("licensebox" in tag.get("class", []) or "授权" in tag.get_text())):
@@ -140,13 +184,15 @@ class SCPParser:
         for bq in content_div.find_all("blockquote"):
             bq["class"] = bq.get("class", []) + ["scpbox"]
 
-        # 6. 清理可能写死大宽度的内联样式，杜绝横向溢出破坏全局缩放
+        # 6. 清理可能写死大宽度的内联样式与浮动，杜绝横向溢出与内容重叠
         for tag in content_div.find_all(lambda t: t.has_attr("style")):
             st = tag["style"]
             if re.search(r"width:\s*\d{3,}px", st):
                 tag["style"] = re.sub(r"width:\s*\d{3,}px", "max-width: 100%", st)
             if "margin" in tag["style"] and re.search(r"margin:\s*[^;]*\d{2,}px", tag["style"]):
                 tag["style"] = re.sub(r"margin:\s*[^;]+;", "margin: 8pt auto;", tag["style"])
+            if "float:" in tag["style"]:
+                tag["style"] = re.sub(r"float:\s*[^;]+;", "float: none; margin: 6pt auto;", tag["style"])
 
         # 7. 关键标签加粗规范化（项目编号、项目等级、特殊收容措施、描述）
         # 先去除可能已存在的标签外层 strong，再统一处理
